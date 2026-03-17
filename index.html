@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>7 天旅遊 / 出差行程規劃器</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand__mark" aria-hidden="true">♡</div>
+        <div class="brand__text">
+          <div class="brand__title">行程規劃器</div>
+          <div class="brand__subtitle">Travel / Biz Trip • 7 Days • Auto Sort</div>
+        </div>
+      </div>
+
+      <div class="topbar__controls">
+        <label class="field field--inline">
+          <span class="field__label">起始日</span>
+          <input id="startDate" type="date" />
+        </label>
+
+        <label class="toggle">
+          <input id="toggleShowAll" type="checkbox" />
+          <span class="toggle__pill"></span>
+          <span class="toggle__text">顯示所有日期</span>
+        </label>
+
+        <button id="btnExport" class="btn btn--ghost" type="button" title="匯出 JSON">匯出</button>
+        <label class="btn btn--ghost btn--file" title="匯入 JSON">
+          匯入
+          <input id="importFile" type="file" accept="application/json" />
+        </label>
+        <button id="btnClear" class="btn btn--danger" type="button" title="清空所有資料">清空</button>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="panel panel--form" aria-label="新增或編輯行程">
+        <h2 class="panel__title">新增 / 編輯行程</h2>
+
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+
+        <form id="itemForm" class="form">
+          <div class="grid2">
+            <label class="field">
+              <span class="field__label">日期</span>
+              <input id="date" type="date" required />
+            </label>
+            <label class="field">
+              <span class="field__label">時間</span>
+              <input id="time" type="time" required />
+            </label>
+          </div>
+
+          <label class="field">
+            <span class="field__label">行程</span>
+            <input id="title" type="text" placeholder="例如：客戶會議 / 城市散步 / 飛機登機" required maxlength="80" />
+          </label>
+
+          <label class="field">
+            <span class="field__label">地點</span>
+            <input id="location" type="text" placeholder="例如：台北 / 東京 / 某某會議室" maxlength="80" />
+          </label>
+
+          <div class="grid2">
+            <label class="field">
+              <span class="field__label">交通方式</span>
+              <select id="transport">
+                <option value="步行">步行</option>
+                <option value="捷運">捷運</option>
+                <option value="火車">火車</option>
+                <option value="高鐵">高鐵</option>
+                <option value="計程車">計程車</option>
+                <option value="自駕">自駕</option>
+                <option value="飛機">飛機</option>
+                <option value="其他">其他（自訂）</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field__label">自訂交通</span>
+              <input id="transportCustom" type="text" placeholder="只有選『其他』才會使用" maxlength="40" />
+            </label>
+          </div>
+
+          <div class="notes">
+            <div class="notes__head">
+              <div class="notes__label">備註（可選取文字加超連結）</div>
+              <div class="notes__tools">
+                <input id="linkUrl" class="notes__url" type="url" placeholder="https://...（選取文字後按『套用連結』）" />
+                <button id="btnLink" class="btn btn--spark" type="button">套用連結</button>
+                <button id="btnUnlink" class="btn btn--ghost" type="button">移除連結</button>
+              </div>
+            </div>
+            <div
+              id="notesEditor"
+              class="notes__editor"
+              contenteditable="true"
+              role="textbox"
+              aria-multiline="true"
+              aria-label="備註編輯器"
+              data-placeholder="可貼上資訊、費用、提醒事項；選取文字後套用連結。"
+            ></div>
+          </div>
+
+          <div class="actions">
+            <button id="btnSave" class="btn btn--primary" type="submit">儲存行程</button>
+            <button id="btnCancelEdit" class="btn btn--ghost" type="button">取消編輯</button>
+            <button id="btnDelete" class="btn btn--danger" type="button">刪除此行程</button>
+          </div>
+        </form>
+
+        <div class="hint">
+          小技巧：你可以先在備註欄打字 → 用滑鼠或鍵盤選取一段文字 → 在上方輸入網址 → 按「套用連結」。
+        </div>
+      </section>
+
+      <section class="panel panel--board" aria-label="7 天行程看板">
+        <div class="panel__titleRow">
+          <h2 class="panel__title">7 天行程看板</h2>
+          <div class="meta">
+            <span id="metaCount" class="chip"></span>
+            <span id="metaRange" class="chip chip--alt"></span>
+          </div>
+        </div>
+        <div id="board" class="board" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="footer__left">
+        <span class="pill">本機保存：localStorage</span>
+        <span class="pill pill--alt">自動排序：日期 + 時間</span>
+        <span class="pill pill--alt2">風格：極繁主義</span>
+      </div>
+      <div class="footer__right">
+        <span class="micro">點卡片即可編輯；清空前建議先匯出。</span>
+      </div>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
