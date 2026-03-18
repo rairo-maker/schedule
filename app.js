@@ -25,6 +25,9 @@
     btnUnlink: document.getElementById("btnUnlink"),
     btnCancelEdit: document.getElementById("btnCancelEdit"),
     btnDelete: document.getElementById("btnDelete"),
+    plannerForm: document.getElementById("plannerForm"),
+    formPanelBody: document.getElementById("formPanelBody"),
+    toggleFormPanel: document.getElementById("toggleFormPanel"),
 
     board: document.getElementById("board"),
     metaCount: document.getElementById("metaCount"),
@@ -35,6 +38,29 @@
   let items = [];
   /** @type {string|null} */
   let editingId = null;
+  let mobileFormCollapsed = false;
+
+  function isMobileViewport() {
+    return window.matchMedia("(max-width: 820px)").matches;
+  }
+
+  function syncFormPanelUi() {
+    const collapsed = isMobileViewport() ? mobileFormCollapsed : false;
+    els.plannerForm.classList.toggle("is-collapsed", collapsed);
+    els.toggleFormPanel.setAttribute("aria-expanded", String(!collapsed));
+    els.toggleFormPanel.textContent = collapsed ? "展開表單" : "收合表單";
+  }
+
+  function setMobileFormCollapsed(collapsed) {
+    mobileFormCollapsed = collapsed;
+    syncFormPanelUi();
+  }
+
+  function ensureFormVisibleOnMobile() {
+    if (!isMobileViewport()) return;
+    setMobileFormCollapsed(false);
+    els.plannerForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   function pad2(n) {
     return String(n).padStart(2, "0");
@@ -305,7 +331,10 @@
             const target = items.find((x) => x.id === it.id);
             if (!target) return;
             fillForm(target);
-            window.scrollTo({ top: 0, behavior: "smooth" });
+            ensureFormVisibleOnMobile();
+            if (!isMobileViewport()) {
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }
           });
           card.addEventListener("keydown", (e) => {
             if (e.key === "Enter" || e.key === " ") {
@@ -349,6 +378,10 @@
     els.toggleShowAll.addEventListener("change", () => {
       saveSettings();
       render();
+    });
+
+    els.toggleFormPanel.addEventListener("click", () => {
+      setMobileFormCollapsed(!mobileFormCollapsed);
     });
 
     els.transport.addEventListener("change", () => {
@@ -418,6 +451,7 @@
 
     els.btnCancelEdit.addEventListener("click", () => {
       clearForm();
+      if (isMobileViewport()) setMobileFormCollapsed(true);
     });
 
     els.btnDelete.addEventListener("click", () => {
@@ -434,6 +468,7 @@
       saveItems();
       setStatus("ok", "已刪除行程。");
       clearForm();
+      if (isMobileViewport()) setMobileFormCollapsed(true);
       render();
     });
 
@@ -543,8 +578,13 @@
       items = [];
       saveItems();
       clearForm();
+      if (isMobileViewport()) setMobileFormCollapsed(true);
       render();
       setStatus("ok", "已清空所有行程。");
+    });
+
+    window.addEventListener("resize", () => {
+      syncFormPanelUi();
     });
   }
 
@@ -552,14 +592,15 @@
     ensureStartDateDefault();
     items = loadItems();
     els.transportCustom.disabled = true;
+    mobileFormCollapsed = isMobileViewport();
     wireEvents();
 
     if (!els.date.value) els.date.value = els.startDate.value;
     if (!els.time.value) els.time.value = "09:00";
     clearForm();
+    syncFormPanelUi();
     render();
   }
 
   init();
 })();
-

@@ -37,13 +37,27 @@
       </div>
     </header>
 
+    <nav class="mobile-nav" aria-label="手機快速切換">
+      <a class="mobile-nav__link" href="#plannerForm">編輯行程</a>
+      <a class="mobile-nav__link" href="#plannerBoard">查看看板</a>
+    </nav>
+
     <main class="shell">
-      <section class="panel panel--form" aria-label="新增或編輯行程">
-        <h2 class="panel__title">新增 / 編輯行程</h2>
+      <section id="plannerForm" class="panel panel--form panel--collapsible is-collapsed" aria-label="新增或編輯行程">
+        <div class="panel__mobileHeader">
+          <div>
+            <h2 class="panel__title">新增 / 編輯行程</h2>
+            <p class="panel__mobileHint">手機版預設先看行程，看板優先。</p>
+          </div>
+          <button id="toggleFormPanel" class="btn btn--ghost panel__toggle" type="button" aria-expanded="false" aria-controls="formPanelBody">
+            展開表單
+          </button>
+        </div>
 
-        <div id="status" class="status" role="status" aria-live="polite"></div>
+        <div id="formPanelBody" class="panel__body">
+          <div id="status" class="status" role="status" aria-live="polite"></div>
 
-        <form id="itemForm" class="form">
+          <form id="itemForm" class="form">
           <div class="grid2">
             <label class="field">
               <span class="field__label">日期</span>
@@ -110,14 +124,15 @@
             <button id="btnCancelEdit" class="btn btn--ghost" type="button">取消編輯</button>
             <button id="btnDelete" class="btn btn--danger" type="button">刪除此行程</button>
           </div>
-        </form>
+          </form>
 
-        <div class="hint">
-          小技巧：你可以先在備註欄打字 → 用滑鼠或鍵盤選取一段文字 → 在上方輸入網址 → 按「套用連結」。
+          <div class="hint">
+            小技巧：你可以先在備註欄打字 → 用滑鼠或鍵盤選取一段文字 → 在上方輸入網址 → 按「套用連結」。
+          </div>
         </div>
       </section>
 
-      <section class="panel panel--board" aria-label="7 天行程看板">
+      <section id="plannerBoard" class="panel panel--board" aria-label="7 天行程看板">
         <div class="panel__titleRow">
           <h2 class="panel__title">7 天行程看板</h2>
           <div class="meta">
