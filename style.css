@@ -5,10 +5,7 @@
   --muted:#6b4b7b;
   --acid:#35d8c6;      /* mint */
   --hot:#ff6fb1;       /* strawberry */
-  --sun:#ffd1e6;       /* blush */
   --sky:#8fb6ff;       /* baby blue */
-  --grape:#c9a0ff;     /* lavender */
-  --cream:#fff9fc;
   --line:rgba(43,25,54,.16);
   --line2:rgba(43,25,54,.24);
   --shadow: 0 16px 0 rgba(43,25,54,.08), 0 28px 46px rgba(43,25,54,.18);
@@ -414,7 +411,6 @@ input:focus, select:focus, .notes__editor:focus{
   letter-spacing: .4px;
 }
 .pill--alt{background: rgba(53,216,198,.14)}
-.pill--alt2{background: rgba(255,111,177,.14)}
 .micro{font-size:12px; opacity:.95}
 
 @media (max-width: 1050px){

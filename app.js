@@ -26,7 +26,6 @@
     btnCancelEdit: document.getElementById("btnCancelEdit"),
     btnDelete: document.getElementById("btnDelete"),
     plannerForm: document.getElementById("plannerForm"),
-    formPanelBody: document.getElementById("formPanelBody"),
     toggleFormPanel: document.getElementById("toggleFormPanel"),
 
     board: document.getElementById("board"),
@@ -39,12 +38,14 @@
   /** @type {string|null} */
   let editingId = null;
   let mobileFormCollapsed = false;
+  let startupStatus = null;
 
   function isMobileViewport() {
     return window.matchMedia("(max-width: 820px)").matches;
   }
 
   function syncFormPanelUi() {
+    if (!els.plannerForm || !els.toggleFormPanel) return;
     const collapsed = isMobileViewport() ? mobileFormCollapsed : false;
     els.plannerForm.classList.toggle("is-collapsed", collapsed);
     els.toggleFormPanel.setAttribute("aria-expanded", String(!collapsed));
@@ -101,6 +102,32 @@
     els.status.textContent = text || "";
   }
 
+  function rememberStartupStatus(kind, text) {
+    startupStatus = { kind, text };
+  }
+
+  function normalizeStorageError(error) {
+    if (error instanceof DOMException) {
+      if (error.name === "QuotaExceededError") {
+        return "本機儲存空間已滿，請先刪除部分行程或匯出後清空。";
+      }
+      if (error.name === "SecurityError") {
+        return "目前瀏覽器環境禁止本機儲存，請改用一般瀏覽模式再試。";
+      }
+    }
+    return "本機儲存失敗，請確認瀏覽器允許 localStorage。";
+  }
+
+  function writeStorage(key, value, fallbackMessage) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      return true;
+    } catch (error) {
+      setStatus("bad", fallbackMessage || normalizeStorageError(error));
+      return false;
+    }
+  }
+
   function isValidHttpUrl(value) {
     if (!value) return false;
     try {
@@ -126,10 +153,10 @@
         toStrip.push(el);
         continue;
       }
+      const href = el.tagName === "A" ? el.getAttribute("href") || "" : "";
       const attrs = [...el.attributes].map((a) => a.name);
       for (const name of attrs) el.removeAttribute(name);
       if (el.tagName === "A") {
-        const href = el.getAttribute("href") || "";
         if (!isValidHttpUrl(href)) {
           toStrip.push(el);
         } else {
@@ -167,12 +194,16 @@
         }))
         .filter((x) => x.startLocal && x.title);
     } catch {
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {}
+      rememberStartupStatus("warn", "已清除損壞的行程資料，現在可以重新儲存。");
       return [];
     }
   }
 
   function saveItems() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    return writeStorage(STORAGE_KEY, items);
   }
 
   function loadSettings() {
@@ -186,17 +217,21 @@
         showAll: Boolean(s.showAll),
       };
     } catch {
+      try {
+        localStorage.removeItem(SETTINGS_KEY);
+      } catch {}
       return null;
     }
   }
 
   function saveSettings() {
-    localStorage.setItem(
+    return writeStorage(
       SETTINGS_KEY,
-      JSON.stringify({
+      {
         startDate: els.startDate.value || null,
         showAll: els.toggleShowAll.checked,
-      }),
+      },
+      "設定儲存失敗，但不影響本次行程內容。",
     );
   }
 
@@ -222,6 +257,11 @@
   function clearForm() {
     editingId = null;
     els.form.reset();
+    els.date.value = els.startDate.value || els.date.value;
+    els.time.value = els.time.value || "09:00";
+    els.transport.value = "步行";
+    els.transportCustom.value = "";
+    els.transportCustom.disabled = true;
     els.notesEditor.innerHTML = "";
     els.linkUrl.value = "";
     els.btnDelete.disabled = true;
@@ -380,9 +420,11 @@
       render();
     });
 
-    els.toggleFormPanel.addEventListener("click", () => {
-      setMobileFormCollapsed(!mobileFormCollapsed);
-    });
+    if (els.toggleFormPanel && els.plannerForm) {
+      els.toggleFormPanel.addEventListener("click", () => {
+        setMobileFormCollapsed(!mobileFormCollapsed);
+      });
+    }
 
     els.transport.addEventListener("change", () => {
       const isOther = els.transport.value === "其他";
@@ -428,7 +470,7 @@
           transport,
           notesHtml,
         };
-        saveItems();
+        if (!saveItems()) return;
         setStatus("ok", "已更新行程，並自動排序。");
       } else {
         const item = {
@@ -441,12 +483,16 @@
           createdAt: Date.now(),
         };
         items.push(item);
-        saveItems();
+        if (!saveItems()) {
+          items = items.filter((x) => x.id !== item.id);
+          return;
+        }
         setStatus("ok", "已新增行程，並自動排序。");
       }
 
       render();
       clearForm();
+      if (isMobileViewport()) setMobileFormCollapsed(true);
     });
 
     els.btnCancelEdit.addEventListener("click", () => {
@@ -464,8 +510,13 @@
       }
       const ok = confirm(`確定刪除這筆行程？\n\n${target.startLocal}\n${target.title}`);
       if (!ok) return;
-      items = items.filter((x) => x.id !== editingId);
-      saveItems();
+      const nextItems = items.filter((x) => x.id !== editingId);
+      const prevItems = items;
+      items = nextItems;
+      if (!saveItems()) {
+        items = prevItems;
+        return;
+      }
       setStatus("ok", "已刪除行程。");
       clearForm();
       if (isMobileViewport()) setMobileFormCollapsed(true);
@@ -562,8 +613,12 @@
 
         const map = new Map(items.map((x) => [x.id, x]));
         for (const it of merged) map.set(it.id, it);
+        const prevItems = items;
         items = [...map.values()];
-        saveItems();
+        if (!saveItems()) {
+          items = prevItems;
+          return;
+        }
         render();
         clearForm();
         setStatus("ok", `已匯入 ${merged.length} 筆行程。`);
@@ -575,8 +630,12 @@
     els.btnClear.addEventListener("click", () => {
       const ok = confirm("確定清空所有行程？\n（建議先匯出備份）");
       if (!ok) return;
+      const prevItems = items;
       items = [];
-      saveItems();
+      if (!saveItems()) {
+        items = prevItems;
+        return;
+      }
       clearForm();
       if (isMobileViewport()) setMobileFormCollapsed(true);
       render();
@@ -598,6 +657,7 @@
     if (!els.date.value) els.date.value = els.startDate.value;
     if (!els.time.value) els.time.value = "09:00";
     clearForm();
+    if (startupStatus) setStatus(startupStatus.kind, startupStatus.text);
     syncFormPanelUi();
     render();
   }
