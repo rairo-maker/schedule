@@ -17,6 +17,15 @@
       </div>
 
       <div class="topbar__controls">
+        <label class="field field--inline field--trip">
+          <span class="field__label">旅程</span>
+          <select id="tripSelect"></select>
+        </label>
+
+        <button id="btnNewTrip" class="btn btn--ghost" type="button">新增旅程</button>
+        <button id="btnRenameTrip" class="btn btn--ghost" type="button">重新命名</button>
+        <button id="btnDeleteTrip" class="btn btn--danger" type="button">刪除旅程</button>
+
         <label class="field field--inline">
           <span class="field__label">起始日</span>
           <input id="startDate" type="date" />
@@ -79,7 +88,7 @@
             <input id="location" type="text" placeholder="例如：台北 / 東京 / 某某會議室" maxlength="80" />
           </label>
 
-          <div class="grid2">
+          <div class="grid3">
             <label class="field">
               <span class="field__label">交通方式</span>
               <select id="transport">
@@ -96,6 +105,10 @@
             <label class="field">
               <span class="field__label">自訂交通</span>
               <input id="transportCustom" type="text" placeholder="只有選『其他』才會使用" maxlength="40" />
+            </label>
+            <label class="field">
+              <span class="field__label">預算</span>
+              <input id="budget" type="number" min="0" step="1" placeholder="例如：1200" />
             </label>
           </div>
 
@@ -139,6 +152,28 @@
             <span id="metaCount" class="chip"></span>
             <span id="metaRange" class="chip chip--alt"></span>
           </div>
+        </div>
+        <div class="summary">
+          <article class="summaryCard">
+            <span class="summaryCard__label">目前旅程</span>
+            <strong id="summaryTripName" class="summaryCard__value"></strong>
+            <span id="summaryTripRange" class="summaryCard__hint"></span>
+          </article>
+          <article class="summaryCard">
+            <span class="summaryCard__label">總預算</span>
+            <strong id="summaryBudget" class="summaryCard__value"></strong>
+            <span id="summaryBudgetAverage" class="summaryCard__hint"></span>
+          </article>
+          <article class="summaryCard">
+            <span class="summaryCard__label">已排項目</span>
+            <strong id="summaryItemCount" class="summaryCard__value"></strong>
+            <span id="summaryTransports" class="summaryCard__hint"></span>
+          </article>
+          <article class="summaryCard">
+            <span class="summaryCard__label">地圖資訊</span>
+            <strong id="summaryLocations" class="summaryCard__value"></strong>
+            <span class="summaryCard__hint">含可直接開啟 Google Maps 的地點</span>
+          </article>
         </div>
         <div id="board" class="board" aria-live="polite"></div>
       </section>

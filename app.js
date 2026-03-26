@@ -1,10 +1,20 @@
 (() => {
-  const STORAGE_KEY = "tripPlanner.v1.items";
-  const SETTINGS_KEY = "tripPlanner.v1.settings";
-
-  /** @typedef {{id:string,startLocal:string,title:string,location:string,transport:string,notesHtml:string,createdAt:number}} TripItem */
+  const STORAGE_KEY = "tripPlanner.v2.data";
+  const LEGACY_ITEMS_KEY = "tripPlanner.v1.items";
+  const LEGACY_SETTINGS_KEY = "tripPlanner.v1.settings";
+  const DEFAULT_TRIP_NAME = "我的旅程";
+  const DEFAULT_TIME = "09:00";
+  const currencyFormatter = new Intl.NumberFormat("zh-TW", {
+    style: "currency",
+    currency: "TWD",
+    maximumFractionDigits: 0,
+  });
 
   const els = {
+    tripSelect: document.getElementById("tripSelect"),
+    btnNewTrip: document.getElementById("btnNewTrip"),
+    btnRenameTrip: document.getElementById("btnRenameTrip"),
+    btnDeleteTrip: document.getElementById("btnDeleteTrip"),
     startDate: document.getElementById("startDate"),
     toggleShowAll: document.getElementById("toggleShowAll"),
     btnExport: document.getElementById("btnExport"),
@@ -19,6 +29,7 @@
     location: document.getElementById("location"),
     transport: document.getElementById("transport"),
     transportCustom: document.getElementById("transportCustom"),
+    budget: document.getElementById("budget"),
     notesEditor: document.getElementById("notesEditor"),
     linkUrl: document.getElementById("linkUrl"),
     btnLink: document.getElementById("btnLink"),
@@ -31,67 +42,38 @@
     board: document.getElementById("board"),
     metaCount: document.getElementById("metaCount"),
     metaRange: document.getElementById("metaRange"),
+    summaryTripName: document.getElementById("summaryTripName"),
+    summaryTripRange: document.getElementById("summaryTripRange"),
+    summaryBudget: document.getElementById("summaryBudget"),
+    summaryBudgetAverage: document.getElementById("summaryBudgetAverage"),
+    summaryItemCount: document.getElementById("summaryItemCount"),
+    summaryTransports: document.getElementById("summaryTransports"),
+    summaryLocations: document.getElementById("summaryLocations"),
   };
 
-  /** @type {TripItem[]} */
-  let items = [];
-  /** @type {string|null} */
+  let data = null;
   let editingId = null;
   let mobileFormCollapsed = false;
   let startupStatus = null;
 
-  function isMobileViewport() {
-    return window.matchMedia("(max-width: 820px)").matches;
-  }
-
-  function syncFormPanelUi() {
-    if (!els.plannerForm || !els.toggleFormPanel) return;
-    const collapsed = isMobileViewport() ? mobileFormCollapsed : false;
-    els.plannerForm.classList.toggle("is-collapsed", collapsed);
-    els.toggleFormPanel.setAttribute("aria-expanded", String(!collapsed));
-    els.toggleFormPanel.textContent = collapsed ? "展開表單" : "收合表單";
-  }
-
-  function setMobileFormCollapsed(collapsed) {
-    mobileFormCollapsed = collapsed;
-    syncFormPanelUi();
-  }
-
-  function ensureFormVisibleOnMobile() {
-    if (!isMobileViewport()) return;
-    setMobileFormCollapsed(false);
-    els.plannerForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  function uid() {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
   }
 
   function pad2(n) {
     return String(n).padStart(2, "0");
   }
 
-  function toYMD(date) {
+  function toYmd(date) {
     return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
   }
 
-  function formatDow(date) {
-    return date.toLocaleDateString(undefined, { weekday: "short" });
+  function todayYmd() {
+    return toYmd(new Date());
   }
 
-  function parseStartTs(startLocal) {
-    const d = new Date(startLocal);
-    const ts = d.getTime();
-    return Number.isFinite(ts) ? ts : NaN;
-  }
-
-  function sortItems(list) {
-    return [...list].sort((a, b) => {
-      const at = parseStartTs(a.startLocal);
-      const bt = parseStartTs(b.startLocal);
-      if (at !== bt) return at - bt;
-      return a.createdAt - b.createdAt;
-    });
-  }
-
-  function uid() {
-    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+  function isMobileViewport() {
+    return window.matchMedia("(max-width: 820px)").matches;
   }
 
   function setStatus(kind, text) {
@@ -118,9 +100,9 @@
     return "本機儲存失敗，請確認瀏覽器允許 localStorage。";
   }
 
-  function writeStorage(key, value, fallbackMessage) {
+  function writeStorage(payload, fallbackMessage) {
     try {
-      localStorage.setItem(key, JSON.stringify(value));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
       return true;
     } catch (error) {
       setStatus("bad", fallbackMessage || normalizeStorageError(error));
@@ -128,11 +110,39 @@
     }
   }
 
+  function normalizeBudget(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return 0;
+    return Math.round(parsed);
+  }
+
+  function formatCurrency(amount) {
+    return currencyFormatter.format(amount || 0);
+  }
+
+  function formatDow(date) {
+    return date.toLocaleDateString(undefined, { weekday: "short" });
+  }
+
+  function parseStartTs(startLocal) {
+    const ts = new Date(startLocal).getTime();
+    return Number.isFinite(ts) ? ts : NaN;
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
   function isValidHttpUrl(value) {
     if (!value) return false;
     try {
-      const u = new URL(value);
-      return u.protocol === "http:" || u.protocol === "https:";
+      const url = new URL(value);
+      return url.protocol === "http:" || url.protocol === "https:";
     } catch {
       return false;
     }
@@ -147,15 +157,18 @@
     const allowedTags = new Set(["A", "BR", "DIV", "P", "SPAN"]);
     const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null);
     const toStrip = [];
+
     while (walker.nextNode()) {
       const el = /** @type {HTMLElement} */ (walker.currentNode);
       if (!allowedTags.has(el.tagName)) {
         toStrip.push(el);
         continue;
       }
+
       const href = el.tagName === "A" ? el.getAttribute("href") || "" : "";
-      const attrs = [...el.attributes].map((a) => a.name);
+      const attrs = [...el.attributes].map((attr) => attr.name);
       for (const name of attrs) el.removeAttribute(name);
+
       if (el.tagName === "A") {
         if (!isValidHttpUrl(href)) {
           toStrip.push(el);
@@ -166,79 +179,151 @@
         }
       }
     }
+
     for (const el of toStrip) {
       const parent = el.parentNode;
       if (!parent) continue;
       while (el.firstChild) parent.insertBefore(el.firstChild, el);
       parent.removeChild(el);
     }
+
     return root.innerHTML.trim();
   }
 
-  function loadItems() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed
-        .filter((x) => x && typeof x === "object")
-        .map((x) => ({
-          id: String(x.id || uid()),
-          startLocal: String(x.startLocal || ""),
-          title: String(x.title || ""),
-          location: String(x.location || ""),
-          transport: String(x.transport || ""),
-          notesHtml: String(x.notesHtml || ""),
-          createdAt: Number.isFinite(Number(x.createdAt)) ? Number(x.createdAt) : Date.now(),
-        }))
-        .filter((x) => x.startLocal && x.title);
-    } catch {
-      try {
-        localStorage.removeItem(STORAGE_KEY);
-      } catch {}
-      rememberStartupStatus("warn", "已清除損壞的行程資料，現在可以重新儲存。");
-      return [];
-    }
+  function createTrip(name, startDate, items = []) {
+    return {
+      id: uid(),
+      name: name || DEFAULT_TRIP_NAME,
+      startDate: startDate || todayYmd(),
+      createdAt: Date.now(),
+      items: items.map(normalizeItem),
+    };
   }
 
-  function saveItems() {
-    return writeStorage(STORAGE_KEY, items);
+  function normalizeItem(item) {
+    return {
+      id: String(item?.id || uid()),
+      startLocal: String(item?.startLocal || `${todayYmd()}T${DEFAULT_TIME}`),
+      title: String(item?.title || "").trim(),
+      location: String(item?.location || "").trim(),
+      transport: String(item?.transport || "").trim(),
+      budget: normalizeBudget(item?.budget || 0),
+      notesHtml: sanitizeNotesHtml(String(item?.notesHtml || "")),
+      createdAt: Number.isFinite(Number(item?.createdAt)) ? Number(item.createdAt) : Date.now(),
+    };
   }
 
-  function loadSettings() {
+  function normalizeTrip(trip) {
+    return {
+      id: String(trip?.id || uid()),
+      name: String(trip?.name || DEFAULT_TRIP_NAME).trim() || DEFAULT_TRIP_NAME,
+      startDate: String(trip?.startDate || todayYmd()),
+      createdAt: Number.isFinite(Number(trip?.createdAt)) ? Number(trip.createdAt) : Date.now(),
+      items: Array.isArray(trip?.items)
+        ? trip.items.map(normalizeItem).filter((item) => item.title)
+        : [],
+    };
+  }
+
+  function createDefaultData() {
+    const trip = createTrip(DEFAULT_TRIP_NAME, todayYmd(), []);
+    return {
+      version: 2,
+      activeTripId: trip.id,
+      ui: { showAll: false },
+      trips: [trip],
+    };
+  }
+
+  function loadLegacyData() {
     try {
-      const raw = localStorage.getItem(SETTINGS_KEY);
-      if (!raw) return null;
-      const s = JSON.parse(raw);
-      if (!s || typeof s !== "object") return null;
+      const rawItems = localStorage.getItem(LEGACY_ITEMS_KEY);
+      const rawSettings = localStorage.getItem(LEGACY_SETTINGS_KEY);
+      const items = rawItems ? JSON.parse(rawItems) : [];
+      const settings = rawSettings ? JSON.parse(rawSettings) : null;
+      if (!Array.isArray(items) || items.length === 0) return null;
+      const trip = createTrip(DEFAULT_TRIP_NAME, settings?.startDate || todayYmd(), items);
+      rememberStartupStatus("warn", "已將舊版資料升級為多旅程格式。");
       return {
-        startDate: typeof s.startDate === "string" ? s.startDate : null,
-        showAll: Boolean(s.showAll),
+        version: 2,
+        activeTripId: trip.id,
+        ui: { showAll: Boolean(settings?.showAll) },
+        trips: [trip],
       };
     } catch {
-      try {
-        localStorage.removeItem(SETTINGS_KEY);
-      } catch {}
       return null;
     }
   }
 
-  function saveSettings() {
-    return writeStorage(
-      SETTINGS_KEY,
-      {
-        startDate: els.startDate.value || null,
-        showAll: els.toggleShowAll.checked,
-      },
-      "設定儲存失敗，但不影響本次行程內容。",
-    );
+  function loadData() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        const legacy = loadLegacyData();
+        return legacy || createDefaultData();
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.trips)) {
+        throw new Error("Invalid data");
+      }
+      const trips = parsed.trips.map(normalizeTrip);
+      const activeTripId = trips.some((trip) => trip.id === parsed.activeTripId)
+        ? parsed.activeTripId
+        : trips[0]?.id;
+
+      if (!trips.length) return createDefaultData();
+
+      return {
+        version: 2,
+        activeTripId,
+        ui: { showAll: Boolean(parsed?.ui?.showAll) },
+        trips,
+      };
+    } catch {
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {}
+      rememberStartupStatus("warn", "已清除損壞的資料，現在可以重新儲存。");
+      return createDefaultData();
+    }
+  }
+
+  function saveData(message) {
+    return writeStorage(data, message);
+  }
+
+  function getActiveTrip() {
+    return data.trips.find((trip) => trip.id === data.activeTripId) || data.trips[0];
+  }
+
+  function cloneData(source) {
+    return JSON.parse(JSON.stringify(source));
+  }
+
+  function sortItems(items) {
+    return [...items].sort((a, b) => {
+      const at = parseStartTs(a.startLocal);
+      const bt = parseStartTs(b.startLocal);
+      if (at !== bt) return at - bt;
+      return a.createdAt - b.createdAt;
+    });
+  }
+
+  function get7Days(startYmd) {
+    const start = new Date(`${startYmd}T00:00`);
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(start);
+      date.setDate(start.getDate() + i);
+      days.push(date);
+    }
+    return days;
   }
 
   function getTransportValue() {
     if (els.transport.value === "其他") {
-      const v = els.transportCustom.value.trim();
-      return v || "其他";
+      const custom = els.transportCustom.value.trim();
+      return custom || "其他";
     }
     return els.transport.value;
   }
@@ -248,137 +333,191 @@
     if (known.includes(value)) {
       els.transport.value = value;
       els.transportCustom.value = "";
+      els.transportCustom.disabled = value !== "其他";
       return;
     }
     els.transport.value = "其他";
     els.transportCustom.value = value || "";
+    els.transportCustom.disabled = false;
   }
 
-  function clearForm() {
+  function getMapsUrl(location) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
+  }
+
+  function syncFormPanelUi() {
+    if (!els.plannerForm || !els.toggleFormPanel) return;
+    const collapsed = isMobileViewport() ? mobileFormCollapsed : false;
+    els.plannerForm.classList.toggle("is-collapsed", collapsed);
+    els.toggleFormPanel.setAttribute("aria-expanded", String(!collapsed));
+    els.toggleFormPanel.textContent = collapsed ? "展開表單" : "收合表單";
+  }
+
+  function setMobileFormCollapsed(collapsed) {
+    mobileFormCollapsed = collapsed;
+    syncFormPanelUi();
+  }
+
+  function ensureFormVisibleOnMobile() {
+    if (!isMobileViewport()) return;
+    setMobileFormCollapsed(false);
+    els.plannerForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function clearForm(statusText = "新增模式：填表後按「儲存行程」。") {
+    const activeTrip = getActiveTrip();
     editingId = null;
     els.form.reset();
-    els.date.value = els.startDate.value || els.date.value;
-    els.time.value = els.time.value || "09:00";
+    els.date.value = activeTrip.startDate;
+    els.time.value = DEFAULT_TIME;
     els.transport.value = "步行";
     els.transportCustom.value = "";
     els.transportCustom.disabled = true;
+    els.budget.value = "";
     els.notesEditor.innerHTML = "";
     els.linkUrl.value = "";
     els.btnDelete.disabled = true;
-    setStatus("ok", "新增模式：填表後按「儲存行程」。");
+    setStatus("ok", statusText);
   }
 
   function fillForm(item) {
     editingId = item.id;
-    const [d, t] = item.startLocal.split("T");
-    els.date.value = d || "";
-    els.time.value = (t || "").slice(0, 5);
+    const [datePart, timePart] = item.startLocal.split("T");
+    els.date.value = datePart || getActiveTrip().startDate;
+    els.time.value = (timePart || DEFAULT_TIME).slice(0, 5);
     els.title.value = item.title || "";
     els.location.value = item.location || "";
-    setTransportValue(item.transport || "");
+    setTransportValue(item.transport || "步行");
+    els.budget.value = item.budget ? String(item.budget) : "";
     els.notesEditor.innerHTML = sanitizeNotesHtml(item.notesHtml || "");
     els.btnDelete.disabled = false;
     setStatus("warn", "編輯模式：修改後按「儲存行程」，或按「取消編輯」。");
   }
 
-  function get7Days(startYmd) {
-    const start = new Date(`${startYmd}T00:00`);
-    const days = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(start);
-      d.setDate(start.getDate() + i);
-      days.push(d);
-    }
-    return days;
+  function renderTripSelect() {
+    const options = data.trips
+      .map((trip) => `<option value="${escapeHtml(trip.id)}">${escapeHtml(trip.name)}</option>`)
+      .join("");
+    els.tripSelect.innerHTML = options;
+    els.tripSelect.value = data.activeTripId;
+    els.btnDeleteTrip.disabled = data.trips.length <= 1;
+  }
+
+  function renderSummary(activeTrip, visibleItems, days) {
+    const totalBudget = visibleItems.reduce((sum, item) => sum + item.budget, 0);
+    const avgBudget = visibleItems.length ? Math.round(totalBudget / visibleItems.length) : 0;
+    const locationCount = visibleItems.filter((item) => item.location).length;
+    const uniqueTransports = [...new Set(visibleItems.map((item) => item.transport).filter(Boolean))];
+
+    els.summaryTripName.textContent = activeTrip.name;
+    els.summaryTripRange.textContent = `${days[0].toLocaleDateString()} → ${days[6].toLocaleDateString()}`;
+    els.summaryBudget.textContent = formatCurrency(totalBudget);
+    els.summaryBudgetAverage.textContent = visibleItems.length
+      ? `平均每項 ${formatCurrency(avgBudget)}`
+      : "尚未填寫預算";
+    els.summaryItemCount.textContent = `${visibleItems.length} 筆`;
+    els.summaryTransports.textContent = uniqueTransports.length
+      ? uniqueTransports.join(" / ")
+      : "尚未設定交通";
+    els.summaryLocations.textContent = `${locationCount} 筆地點`;
   }
 
   function render() {
-    const startYmd = els.startDate.value;
-    const showAll = els.toggleShowAll.checked;
+    const activeTrip = getActiveTrip();
+    const startYmd = activeTrip.startDate;
     const days = get7Days(startYmd);
-    const ymds = new Set(days.map(toYMD));
+    const showAll = data.ui.showAll;
+    const ymds = new Set(days.map(toYmd));
 
-    const sorted = sortItems(items);
-    const visible = showAll ? sorted : sorted.filter((x) => ymds.has(x.startLocal.slice(0, 10)));
+    els.startDate.value = activeTrip.startDate;
+    els.toggleShowAll.checked = showAll;
 
-    const hiddenCount = sorted.length - visible.length;
-    els.metaCount.textContent = `Items: ${sorted.length}${hiddenCount ? ` (hidden ${hiddenCount})` : ""}`;
+    const sortedItems = sortItems(activeTrip.items);
+    const visibleItems = showAll
+      ? sortedItems
+      : sortedItems.filter((item) => ymds.has(item.startLocal.slice(0, 10)));
+
+    const hiddenCount = sortedItems.length - visibleItems.length;
+    els.metaCount.textContent = `Items: ${sortedItems.length}${hiddenCount ? ` (hidden ${hiddenCount})` : ""}`;
     els.metaRange.textContent = `${days[0].toLocaleDateString()} → ${days[6].toLocaleDateString()}`;
+    renderSummary(activeTrip, visibleItems, days);
 
-    const byDay = new Map();
-    for (const d of days) byDay.set(toYMD(d), []);
-    if (showAll) byDay.set("__ALL__", []);
+    const buckets = new Map();
+    for (const day of days) buckets.set(toYmd(day), []);
+    if (showAll) buckets.set("__ALL__", []);
 
-    for (const it of visible) {
-      const key = showAll ? "__ALL__" : it.startLocal.slice(0, 10);
-      if (!byDay.has(key)) byDay.set(key, []);
-      byDay.get(key).push(it);
+    for (const item of visibleItems) {
+      const key = showAll ? "__ALL__" : item.startLocal.slice(0, 10);
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(item);
     }
 
     els.board.innerHTML = "";
 
-    const dayKeys = showAll ? ["__ALL__"] : days.map(toYMD);
+    const dayKeys = showAll ? ["__ALL__"] : days.map(toYmd);
     for (const key of dayKeys) {
-      const dayDate = showAll ? null : days.find((d) => toYMD(d) === key) || null;
-      const dayTitle = showAll ? "全部" : dayDate.toLocaleDateString();
-      const dow = showAll ? "All Dates" : formatDow(dayDate);
-
-      const col = document.createElement("section");
-      col.className = "day";
-      col.innerHTML = `
+      const dayDate = showAll ? null : days.find((day) => toYmd(day) === key) || null;
+      const items = buckets.get(key) || [];
+      const section = document.createElement("section");
+      section.className = "day";
+      section.innerHTML = `
         <div class="day__head">
-          <div class="day__date">${escapeHtml(dayTitle)}</div>
-          <div class="day__dow">${escapeHtml(dow)}</div>
+          <div class="day__date">${escapeHtml(showAll ? "全部日期" : dayDate.toLocaleDateString())}</div>
+          <div class="day__dow">${escapeHtml(showAll ? activeTrip.name : formatDow(dayDate))}</div>
         </div>
         <div class="day__list"></div>
       `;
-      const list = col.querySelector(".day__list");
-      const listItems = byDay.get(key) || [];
+      const list = section.querySelector(".day__list");
 
-      if (listItems.length === 0) {
+      if (!items.length) {
         const empty = document.createElement("div");
         empty.className = "hint";
         empty.textContent = showAll ? "目前沒有任何行程。" : "這一天沒有行程（可以新增一筆！）。";
         list.appendChild(empty);
       } else {
-        for (const it of listItems) {
+        for (const item of items) {
+          const timeText = item.startLocal.split("T")[1]?.slice(0, 5) || "--:--";
+          const mapsButton = item.location
+            ? `<a class="mapLink" href="${getMapsUrl(item.location)}" target="_blank" rel="noopener noreferrer" data-stop-card="true">Google Maps</a>`
+            : "";
+          const budgetBadge = item.budget ? `<div class="tag">${escapeHtml(formatCurrency(item.budget))}</div>` : "";
+          const notes = sanitizeNotesHtml(item.notesHtml);
+
           const card = document.createElement("article");
           card.className = "card";
           card.tabIndex = 0;
           card.setAttribute("role", "button");
-          card.setAttribute("aria-label", `編輯行程：${it.title}`);
-          card.dataset.id = it.id;
-
-          const t = it.startLocal.split("T")[1]?.slice(0, 5) || "--:--";
-          const notes = sanitizeNotesHtml(it.notesHtml || "");
-          const location = (it.location || "").trim();
-          const transport = (it.transport || "").trim();
-
+          card.setAttribute("aria-label", `編輯行程：${item.title}`);
+          card.dataset.id = item.id;
           card.innerHTML = `
             <div class="card__top">
-              <div class="timeBadge">${escapeHtml(t)}</div>
-              <div class="tag ${transport ? "tag--acid" : ""}">${escapeHtml(transport || "未填交通")}</div>
+              <div class="timeBadge">${escapeHtml(timeText)}</div>
+              <div class="tag ${item.transport ? "tag--acid" : ""}">${escapeHtml(item.transport || "未填交通")}</div>
             </div>
-            <div class="card__title">${escapeHtml(it.title)}</div>
+            <div class="card__title">${escapeHtml(item.title)}</div>
             <div class="card__row">
-              <div class="tag ${location ? "tag--hot" : ""}">${escapeHtml(location || "未填地點")}</div>
-              ${showAll ? `<div class="tag">${escapeHtml(it.startLocal.slice(0, 10))}</div>` : ""}
+              <div class="tag ${item.location ? "tag--hot" : ""}">${escapeHtml(item.location || "未填地點")}</div>
+              ${budgetBadge}
             </div>
             ${notes ? `<div class="card__notes">${notes}</div>` : ""}
+            ${mapsButton ? `<div class="card__actions">${mapsButton}</div>` : ""}
           `;
 
-          card.addEventListener("click", () => {
-            const target = items.find((x) => x.id === it.id);
-            if (!target) return;
-            fillForm(target);
+          card.addEventListener("click", (event) => {
+            const target = /** @type {HTMLElement | null} */ (event.target);
+            if (target?.closest("[data-stop-card='true']")) return;
+            const currentItem = getActiveTrip().items.find((entry) => entry.id === item.id);
+            if (!currentItem) return;
+            fillForm(currentItem);
             ensureFormVisibleOnMobile();
             if (!isMobileViewport()) {
               window.scrollTo({ top: 0, behavior: "smooth" });
             }
           });
-          card.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
+
+          card.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
               card.click();
             }
           });
@@ -387,36 +526,201 @@
         }
       }
 
-      els.board.appendChild(col);
+      els.board.appendChild(section);
     }
   }
 
-  function escapeHtml(s) {
-    return String(s)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
+  function commitActiveTrip(nextTrip, successMessage) {
+    const previousData = cloneData(data);
+    data.trips = data.trips.map((trip) => (trip.id === nextTrip.id ? nextTrip : trip));
+    if (!saveData()) {
+      data = previousData;
+      return false;
+    }
+    if (successMessage) setStatus("ok", successMessage);
+    return true;
   }
 
-  function ensureStartDateDefault() {
-    const settings = loadSettings();
-    const today = new Date();
-    const defaultStart = settings?.startDate || toYMD(today);
-    els.startDate.value = defaultStart;
-    els.toggleShowAll.checked = settings?.showAll || false;
+  function handleTripCreate() {
+    const rawName = prompt("請輸入新旅程名稱：", `旅程 ${data.trips.length + 1}`);
+    if (rawName === null) return;
+    const name = rawName.trim();
+    if (!name) {
+      setStatus("bad", "旅程名稱不能為空。");
+      return;
+    }
+
+    const previousData = cloneData(data);
+    const trip = createTrip(name, todayYmd(), []);
+    data.trips.push(trip);
+    data.activeTripId = trip.id;
+    if (!saveData()) {
+      data = previousData;
+      return;
+    }
+    renderTripSelect();
+    clearForm(`已新增旅程「${trip.name}」。`);
+    render();
+    if (isMobileViewport()) setMobileFormCollapsed(true);
+  }
+
+  function handleTripRename() {
+    const activeTrip = getActiveTrip();
+    const rawName = prompt("請輸入新的旅程名稱：", activeTrip.name);
+    if (rawName === null) return;
+    const name = rawName.trim();
+    if (!name) {
+      setStatus("bad", "旅程名稱不能為空。");
+      return;
+    }
+    const nextTrip = { ...activeTrip, name };
+    if (!commitActiveTrip(nextTrip, `已重新命名為「${name}」。`)) return;
+    renderTripSelect();
+    render();
+  }
+
+  function handleTripDelete() {
+    const activeTrip = getActiveTrip();
+    if (data.trips.length === 1) {
+      setStatus("bad", "至少要保留一個旅程。");
+      return;
+    }
+    const ok = confirm(`確定刪除旅程「${activeTrip.name}」？\n\n這會刪除該旅程底下所有行程。`);
+    if (!ok) return;
+
+    const previousData = cloneData(data);
+    data.trips = data.trips.filter((trip) => trip.id !== activeTrip.id);
+    data.activeTripId = data.trips[0].id;
+    if (!saveData()) {
+      data = previousData;
+      return;
+    }
+    renderTripSelect();
+    clearForm(`已刪除旅程「${activeTrip.name}」。`);
+    render();
+  }
+
+  function exportData() {
+    const payload = {
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      data,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const anchor = document.createElement("a");
+    anchor.href = URL.createObjectURL(blob);
+    anchor.download = `trip-planner-export-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(anchor.href), 1000);
+    setStatus("ok", "已匯出所有旅程資料。");
+  }
+
+  async function importData() {
+    const file = els.importFile.files?.[0];
+    els.importFile.value = "";
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const incomingData = parsed?.data?.trips
+        ? parsed.data
+        : parsed?.trips
+          ? parsed
+          : Array.isArray(parsed?.items)
+            ? {
+                version: 2,
+                activeTripId: null,
+                ui: { showAll: false },
+                trips: [createTrip("匯入旅程", todayYmd(), parsed.items)],
+              }
+            : null;
+
+      if (!incomingData) {
+        setStatus("bad", "匯入失敗：檔案內容不是支援的旅程格式。");
+        return;
+      }
+
+      const normalized = {
+        version: 2,
+        activeTripId: incomingData.activeTripId,
+        ui: { showAll: Boolean(incomingData?.ui?.showAll) },
+        trips: incomingData.trips.map(normalizeTrip).filter((trip) => trip.name),
+      };
+
+      if (!normalized.trips.length) {
+        setStatus("bad", "匯入失敗：找不到可用旅程。");
+        return;
+      }
+
+      if (!normalized.trips.some((trip) => trip.id === normalized.activeTripId)) {
+        normalized.activeTripId = normalized.trips[0].id;
+      }
+
+      const ok = confirm(`匯入 ${normalized.trips.length} 個旅程，將覆蓋目前所有資料。`);
+      if (!ok) return;
+
+      const previousData = cloneData(data);
+      data = normalized;
+      if (!saveData()) {
+        data = previousData;
+        return;
+      }
+
+      renderTripSelect();
+      clearForm("已匯入旅程資料。");
+      render();
+    } catch {
+      setStatus("bad", "匯入失敗：檔案不是有效 JSON。");
+    }
+  }
+
+  function clearActiveTripItems() {
+    const activeTrip = getActiveTrip();
+    const ok = confirm(`確定清空旅程「${activeTrip.name}」的所有行程？\n（建議先匯出備份）`);
+    if (!ok) return;
+
+    const nextTrip = { ...activeTrip, items: [] };
+    if (!commitActiveTrip(nextTrip, `已清空「${activeTrip.name}」的所有行程。`)) return;
+    clearForm();
+    render();
   }
 
   function wireEvents() {
+    els.tripSelect.addEventListener("change", () => {
+      const previousData = cloneData(data);
+      data.activeTripId = els.tripSelect.value;
+      if (!saveData("切換旅程失敗，請稍後再試。")) {
+        data = previousData;
+        renderTripSelect();
+        return;
+      }
+      clearForm(`已切換到「${getActiveTrip().name}」。`);
+      render();
+      if (isMobileViewport()) setMobileFormCollapsed(true);
+    });
+
+    els.btnNewTrip.addEventListener("click", handleTripCreate);
+    els.btnRenameTrip.addEventListener("click", handleTripRename);
+    els.btnDeleteTrip.addEventListener("click", handleTripDelete);
+
     els.startDate.addEventListener("change", () => {
-      saveSettings();
-      if (!els.date.value) els.date.value = els.startDate.value;
+      const activeTrip = getActiveTrip();
+      const nextTrip = { ...activeTrip, startDate: els.startDate.value || activeTrip.startDate };
+      if (!commitActiveTrip(nextTrip)) return;
+      if (!editingId) els.date.value = nextTrip.startDate;
       render();
     });
 
     els.toggleShowAll.addEventListener("change", () => {
-      saveSettings();
+      const previousData = cloneData(data);
+      data.ui.showAll = els.toggleShowAll.checked;
+      if (!saveData("檢視設定儲存失敗。")) {
+        data = previousData;
+        return;
+      }
       render();
     });
 
@@ -432,66 +736,67 @@
       if (!isOther) els.transportCustom.value = "";
     });
 
-    els.form.addEventListener("submit", (e) => {
-      e.preventDefault();
+    els.form.addEventListener("submit", (event) => {
+      event.preventDefault();
 
-      const d = els.date.value;
-      const t = els.time.value;
+      const activeTrip = getActiveTrip();
+      const date = els.date.value;
+      const time = els.time.value;
       const title = els.title.value.trim();
-      if (!d || !t || !title) {
+      const location = els.location.value.trim();
+      const transport = getTransportValue().trim();
+      const budget = normalizeBudget(els.budget.value);
+      const notesHtml = sanitizeNotesHtml(els.notesEditor.innerHTML);
+
+      if (!date || !time || !title) {
         setStatus("bad", "請至少填：日期、時間、行程名稱。");
         return;
       }
 
-      const startLocal = `${d}T${t}`;
-      const ts = parseStartTs(startLocal);
-      if (!Number.isFinite(ts)) {
-        setStatus("bad", "日期/時間格式無法解析，請重新選擇。");
+      const startLocal = `${date}T${time}`;
+      if (!Number.isFinite(parseStartTs(startLocal))) {
+        setStatus("bad", "日期 / 時間格式無法解析，請重新選擇。");
         return;
       }
 
-      const notesHtml = sanitizeNotesHtml(els.notesEditor.innerHTML);
-      const transport = getTransportValue().trim();
-      const location = els.location.value.trim();
+      const nextItems = [...activeTrip.items];
+      let successMessage = "已新增行程，並自動排序。";
 
       if (editingId) {
-        const idx = items.findIndex((x) => x.id === editingId);
-        if (idx === -1) {
+        const index = nextItems.findIndex((item) => item.id === editingId);
+        if (index === -1) {
           setStatus("bad", "找不到要編輯的行程（可能已被刪除）。");
           clearForm();
           render();
           return;
         }
-        items[idx] = {
-          ...items[idx],
+        nextItems[index] = {
+          ...nextItems[index],
           startLocal,
           title,
           location,
           transport,
+          budget,
           notesHtml,
         };
-        if (!saveItems()) return;
-        setStatus("ok", "已更新行程，並自動排序。");
+        successMessage = "已更新行程，並自動排序。";
       } else {
-        const item = {
+        nextItems.push({
           id: uid(),
           startLocal,
           title,
           location,
           transport,
+          budget,
           notesHtml,
           createdAt: Date.now(),
-        };
-        items.push(item);
-        if (!saveItems()) {
-          items = items.filter((x) => x.id !== item.id);
-          return;
-        }
-        setStatus("ok", "已新增行程，並自動排序。");
+        });
       }
 
+      const nextTrip = { ...activeTrip, items: nextItems };
+      if (!commitActiveTrip(nextTrip, successMessage)) return;
       render();
-      clearForm();
+      clearForm(successMessage);
       if (isMobileViewport()) setMobileFormCollapsed(true);
     });
 
@@ -502,7 +807,8 @@
 
     els.btnDelete.addEventListener("click", () => {
       if (!editingId) return;
-      const target = items.find((x) => x.id === editingId);
+      const activeTrip = getActiveTrip();
+      const target = activeTrip.items.find((item) => item.id === editingId);
       if (!target) {
         clearForm();
         render();
@@ -510,15 +816,12 @@
       }
       const ok = confirm(`確定刪除這筆行程？\n\n${target.startLocal}\n${target.title}`);
       if (!ok) return;
-      const nextItems = items.filter((x) => x.id !== editingId);
-      const prevItems = items;
-      items = nextItems;
-      if (!saveItems()) {
-        items = prevItems;
-        return;
-      }
-      setStatus("ok", "已刪除行程。");
-      clearForm();
+      const nextTrip = {
+        ...activeTrip,
+        items: activeTrip.items.filter((item) => item.id !== editingId),
+      };
+      if (!commitActiveTrip(nextTrip, "已刪除行程。")) return;
+      clearForm("已刪除行程。");
       if (isMobileViewport()) setMobileFormCollapsed(true);
       render();
     });
@@ -530,24 +833,20 @@
         return;
       }
 
-      const sel = document.getSelection();
-      if (!sel || sel.rangeCount === 0) {
+      const selection = document.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
         setStatus("bad", "請先在備註欄選取一段文字。");
         return;
       }
-      const range = sel.getRangeAt(0);
+
+      const range = selection.getRangeAt(0);
       if (!els.notesEditor.contains(range.commonAncestorContainer)) {
-        setStatus("bad", "請在『備註』欄位內選取文字後再套用連結。");
-        return;
-      }
-      if (sel.isCollapsed) {
-        setStatus("bad", "選取範圍為空：請先反白一段文字。");
+        setStatus("bad", "請在備註欄內選取文字後再套用連結。");
         return;
       }
 
       els.notesEditor.focus();
       document.execCommand("createLink", false, url);
-
       els.notesEditor.innerHTML = sanitizeNotesHtml(els.notesEditor.innerHTML);
       setStatus("ok", "已套用連結（儲存行程後會保留）。");
     });
@@ -559,103 +858,18 @@
       setStatus("ok", "已移除連結。");
     });
 
-    els.btnExport.addEventListener("click", () => {
-      const payload = {
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        items,
-      };
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `trip-planner-export-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-      setStatus("ok", "已匯出 JSON。");
-    });
+    els.btnExport.addEventListener("click", exportData);
+    els.importFile.addEventListener("change", importData);
+    els.btnClear.addEventListener("click", clearActiveTripItems);
 
-    els.importFile.addEventListener("change", async () => {
-      const file = els.importFile.files?.[0];
-      els.importFile.value = "";
-      if (!file) return;
-      try {
-        const text = await file.text();
-        const parsed = JSON.parse(text);
-        const incoming = Array.isArray(parsed) ? parsed : parsed?.items;
-        if (!Array.isArray(incoming)) {
-          setStatus("bad", "匯入失敗：JSON 格式不正確（找不到 items）。");
-          return;
-        }
-        const merged = incoming
-          .filter((x) => x && typeof x === "object")
-          .map((x) => ({
-            id: String(x.id || uid()),
-            startLocal: String(x.startLocal || ""),
-            title: String(x.title || ""),
-            location: String(x.location || ""),
-            transport: String(x.transport || ""),
-            notesHtml: sanitizeNotesHtml(String(x.notesHtml || "")),
-            createdAt: Number.isFinite(Number(x.createdAt)) ? Number(x.createdAt) : Date.now(),
-          }))
-          .filter((x) => x.startLocal && x.title);
-
-        if (merged.length === 0) {
-          setStatus("bad", "匯入內容為空（沒有可用的行程）。");
-          return;
-        }
-
-        const ok = confirm(
-          `匯入 ${merged.length} 筆行程。\n\n選「確定」會與現有資料合併（相同 id 會被覆蓋）。`,
-        );
-        if (!ok) return;
-
-        const map = new Map(items.map((x) => [x.id, x]));
-        for (const it of merged) map.set(it.id, it);
-        const prevItems = items;
-        items = [...map.values()];
-        if (!saveItems()) {
-          items = prevItems;
-          return;
-        }
-        render();
-        clearForm();
-        setStatus("ok", `已匯入 ${merged.length} 筆行程。`);
-      } catch {
-        setStatus("bad", "匯入失敗：檔案不是有效 JSON。");
-      }
-    });
-
-    els.btnClear.addEventListener("click", () => {
-      const ok = confirm("確定清空所有行程？\n（建議先匯出備份）");
-      if (!ok) return;
-      const prevItems = items;
-      items = [];
-      if (!saveItems()) {
-        items = prevItems;
-        return;
-      }
-      clearForm();
-      if (isMobileViewport()) setMobileFormCollapsed(true);
-      render();
-      setStatus("ok", "已清空所有行程。");
-    });
-
-    window.addEventListener("resize", () => {
-      syncFormPanelUi();
-    });
+    window.addEventListener("resize", syncFormPanelUi);
   }
 
   function init() {
-    ensureStartDateDefault();
-    items = loadItems();
-    els.transportCustom.disabled = true;
+    data = loadData();
     mobileFormCollapsed = isMobileViewport();
+    renderTripSelect();
     wireEvents();
-
-    if (!els.date.value) els.date.value = els.startDate.value;
-    if (!els.time.value) els.time.value = "09:00";
     clearForm();
     if (startupStatus) setStatus(startupStatus.kind, startupStatus.text);
     syncFormPanelUi();
