@@ -5,8 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>7 天旅遊 / 出差行程規劃器</title>
     <link rel="stylesheet" href="style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   </head>
   <body>
+    <!-- 載入中遮罩 -->
+    <div id="loading" class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <p>檢查登入狀態...</p>
+    </div>
+
     <header class="topbar">
       <div class="brand">
         <div class="brand__mark" aria-hidden="true">♡</div>
@@ -43,6 +50,7 @@
           <input id="importFile" type="file" accept="application/json" />
         </label>
         <button id="btnClear" class="btn btn--danger" type="button" title="清空所有資料">清空</button>
+        <button id="btnLogout" class="btn btn--ghost" type="button">登出</button>
       </div>
     </header>
 

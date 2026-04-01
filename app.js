@@ -1,4 +1,17 @@
 (() => {
+  const loadingOverlay = document.getElementById("loading");
+
+  // Supabase 初始化 (請替換為您的 Supabase URL 和 API Key)
+  const SUPABASE_URL = 'https://vztealcurhcjvkrrtvui.supabase.co'; // 替換為您的 Supabase URL
+  const SUPABASE_ANON_KEY = 'sb_publishable_aLGlNwheFAthxrd0LReqQg_H0XfStht'; // 替換為您的 Supabase Anon Key
+  if (!window.supabase?.createClient) {
+    if (loadingOverlay) {
+      loadingOverlay.innerHTML = "<p>Supabase SDK 載入失敗，請重新整理頁面後再試。</p>";
+    }
+    throw new Error("Supabase SDK not loaded");
+  }
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
   const STORAGE_KEY = "tripPlanner.v2.data";
   const LEGACY_ITEMS_KEY = "tripPlanner.v1.items";
   const LEGACY_SETTINGS_KEY = "tripPlanner.v1.settings";
@@ -49,10 +62,15 @@
     summaryItemCount: document.getElementById("summaryItemCount"),
     summaryTransports: document.getElementById("summaryTransports"),
     summaryLocations: document.getElementById("summaryLocations"),
+
+    // 載入相關
+    loading: loadingOverlay,
+    btnLogout: document.getElementById("btnLogout"),
   };
 
   let data = null;
   let editingId = null;
+  let currentUser = null;
   let mobileFormCollapsed = false;
   let startupStatus = null;
 
@@ -600,6 +618,11 @@
     render();
   }
 
+  async function handleLogout() {
+    await supabaseClient.auth.signOut();
+    window.location.href = 'login.html';
+  }
+
   function exportData() {
     const payload = {
       version: 2,
@@ -862,10 +885,39 @@
     els.importFile.addEventListener("change", importData);
     els.btnClear.addEventListener("click", clearActiveTripItems);
 
+    // 登出事件
+    els.btnLogout.addEventListener("click", handleLogout);
+
     window.addEventListener("resize", syncFormPanelUi);
   }
 
-  function init() {
+  async function init() {
+    // 檢查登入狀態
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session) {
+      // 未登入，重定向到登入頁面
+      window.location.href = 'login.html';
+      return;
+    }
+
+    // 檢查用戶角色
+    const { data: userData, error: userError } = await supabaseClient
+      .from('profiles')
+      .select('role')
+      .eq('id', session.user.id)
+      .single();
+
+    if (userError || !userData) {
+      await supabaseClient.auth.signOut();
+      window.location.href = 'login.html';
+      return;
+    }
+
+    currentUser = { ...session.user, role: userData.role };
+
+    // 隱藏載入遮罩
+    els.loading.style.display = 'none';
+
     data = loadData();
     mobileFormCollapsed = isMobileViewport();
     renderTripSelect();
@@ -874,6 +926,8 @@
     if (startupStatus) setStatus(startupStatus.kind, startupStatus.text);
     syncFormPanelUi();
     render();
+
+    setStatus("ok", `歡迎 ${userData.role === 'admin' ? '管理者' : '使用者'} ${session.user.email}`);
   }
 
   init();

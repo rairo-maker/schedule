@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>登入 - 行程規劃器</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  </head>
+  <body class="login-page">
+    <div class="login-container">
+      <div class="login-card">
+        <h1>行程規劃器</h1>
+        <p>請登入以繼續使用系統</p>
+
+        <form id="loginForm">
+          <div class="form-group">
+            <label for="email">電子郵件:</label>
+            <input type="email" id="email" required>
+          </div>
+
+          <div class="form-group">
+            <label for="password">密碼:</label>
+            <input type="password" id="password" required>
+          </div>
+
+          <div class="form-group">
+            <label for="role">角色:</label>
+            <select id="role">
+              <option value="user">使用者</option>
+              <option value="admin">管理者</option>
+            </select>
+          </div>
+
+          <button type="submit" class="btn-login">登入</button>
+        </form>
+
+        <p id="loginMessage" class="error-message"></p>
+      </div>
+    </div>
+
+    <script>
+      // Supabase 初始化 (請替換為您的 Supabase URL 和 API Key)
+      const loginForm = document.getElementById('loginForm');
+      const emailInput = document.getElementById('email');
+      const passwordInput = document.getElementById('password');
+      const roleSelect = document.getElementById('role');
+      const loginMessage = document.getElementById('loginMessage');
+      const SUPABASE_URL = 'https://vztealcurhcjvkrrtvui.supabase.co'; // 替換為您的 Supabase URL
+      const SUPABASE_ANON_KEY = 'sb_publishable_aLGlNwheFAthxrd0LReqQg_H0XfStht'; // 替換為您的 Supabase Anon Key
+
+      if (!window.supabase?.createClient) {
+        loginMessage.textContent = 'Supabase SDK 載入失敗，請重新整理頁面後再試。';
+        loginMessage.className = 'error-message';
+        throw new Error('Supabase SDK not loaded');
+      }
+
+      const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+      // 檢查是否已登入
+      async function checkAuth() {
+        const { data: { session } } = await supabaseClient.auth.getSession();
+        if (session) {
+          // 已登入，重定向到主頁面
+          window.location.href = 'index.html';
+        }
+      }
+
+      // 登入處理
+      async function handleLogin(event) {
+        event.preventDefault();
+        const email = emailInput.value;
+        const password = passwordInput.value;
+        const role = roleSelect.value;
+
+        loginMessage.textContent = '登入中...';
+        loginMessage.className = 'info-message';
+
+        try {
+          const { data: authData, error } = await supabaseClient.auth.signInWithPassword({
+            email,
+            password,
+          });
+
+          if (error) {
+            loginMessage.textContent = error.message;
+            loginMessage.className = 'error-message';
+            return;
+          }
+
+          // 檢查用戶角色
+          const { data: userData, error: userError } = await supabaseClient
+            .from('profiles')
+            .select('role')
+            .eq('id', authData.user.id)
+            .single();
+
+          if (userError || userData.role !== role) {
+            loginMessage.textContent = '角色不匹配或用戶不存在';
+            loginMessage.className = 'error-message';
+            await supabaseClient.auth.signOut();
+            return;
+          }
+
+          // 登入成功，重定向到主頁面
+          window.location.href = 'index.html';
+        } catch (err) {
+          loginMessage.textContent = '登入失敗，請稍後再試';
+          loginMessage.className = 'error-message';
+        }
+      }
+
+      // 事件監聽
+      loginForm.addEventListener('submit', handleLogin);
+
+      // 頁面載入時檢查認證
+      checkAuth();
+    </script>
+  </body>
+</html>
