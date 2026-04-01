@@ -55,14 +55,27 @@ CREATE POLICY "Users can insert own user profile" ON public.profiles
 CREATE POLICY "Users can update own profile" ON public.profiles
   FOR UPDATE USING (auth.uid() = id);
 
--- 創建政策：管理員可以查看所有用戶
-CREATE POLICY "Admins can view all profiles" ON public.profiles
-  FOR SELECT USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE id = auth.uid() AND role = 'admin'
-    )
+-- 如果未來需要管理員查看全部 profiles，不要直接在 policy 裡查 profiles 自己，
+-- 否則會出現 "infinite recursion detected in policy for relation profiles"。
+-- 請改用 SECURITY DEFINER function：
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.profiles
+    WHERE id = auth.uid() AND role = 'admin'
   );
+$$;
+
+REVOKE ALL ON FUNCTION public.is_admin() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
+
+CREATE POLICY "Admins can view all profiles" ON public.profiles
+  FOR SELECT USING (public.is_admin());
 ```
 
 ## 4. 註冊測試用戶
@@ -120,6 +133,9 @@ VALUES ('用戶的-uuid-這裡', 'user_username', 'user');
 
 **Q: 登入時顯示 "角色不匹配"**
 A: 確認用戶在 profiles 表中的角色設定正確，且登入時選擇的角色與資料庫中的一致。若訊息提到尚未設定管理者角色，代表該帳號需要先手動建立 `role = 'admin'` 的 profile。
+
+**Q: 顯示 "infinite recursion detected in policy for relation profiles"**
+A: 代表 `profiles` 的 RLS policy 直接查了 `profiles` 自己。請刪除原本的管理員查詢 policy，改用上方的 `public.is_admin()` function 版本。
 
 **Q: 無法連接到 Supabase**
 A: 檢查網路連線和憑證是否正確設定。
