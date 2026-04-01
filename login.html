@@ -66,6 +66,11 @@
         }
       }
 
+      function buildUsername(email, userId) {
+        const prefix = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]+/g, '_') || 'user';
+        return `${prefix}_${userId.slice(0, 8)}`;
+      }
+
       // 登入處理
       async function handleLogin(event) {
         event.preventDefault();
@@ -93,10 +98,48 @@
             .from('profiles')
             .select('role')
             .eq('id', authData.user.id)
-            .single();
+            .maybeSingle();
 
-          if (userError || userData.role !== role) {
-            loginMessage.textContent = '角色不匹配或用戶不存在';
+          if (userError) {
+            loginMessage.textContent = `角色資料讀取失敗：${userError.message}`;
+            loginMessage.className = 'error-message';
+            await supabaseClient.auth.signOut();
+            return;
+          }
+
+          let profile = userData;
+
+          if (!profile) {
+            if (role === 'admin') {
+              loginMessage.textContent = '此帳號尚未設定管理者角色，請先到 Supabase 的 profiles 表建立 admin 紀錄。';
+              loginMessage.className = 'error-message';
+              await supabaseClient.auth.signOut();
+              return;
+            }
+
+            const username = buildUsername(email, authData.user.id);
+            const { data: insertedProfile, error: insertError } = await supabaseClient
+              .from('profiles')
+              .insert({
+                id: authData.user.id,
+                username,
+                role: 'user',
+              })
+              .select('role')
+              .single();
+
+            if (insertError) {
+              loginMessage.textContent = `建立使用者資料失敗：${insertError.message}`;
+              loginMessage.className = 'error-message';
+              await supabaseClient.auth.signOut();
+              return;
+            }
+
+            profile = insertedProfile;
+          }
+
+          if (profile.role !== role) {
+            loginMessage.textContent = `此帳號角色為「${profile.role === 'admin' ? '管理者' : '使用者'}」，請重新選擇。`;
             loginMessage.className = 'error-message';
             await supabaseClient.auth.signOut();
             return;

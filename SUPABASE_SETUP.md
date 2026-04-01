@@ -48,8 +48,8 @@ CREATE POLICY "Users can view own profile" ON public.profiles
   FOR SELECT USING (auth.uid() = id);
 
 -- 創建政策：允許插入新用戶資料 (註冊時)
-CREATE POLICY "Users can insert own profile" ON public.profiles
-  FOR INSERT WITH CHECK (auth.uid() = id);
+CREATE POLICY "Users can insert own user profile" ON public.profiles
+  FOR INSERT WITH CHECK (auth.uid() = id AND role = 'user');
 
 -- 創建政策：允許更新自己的資料
 CREATE POLICY "Users can update own profile" ON public.profiles
@@ -79,14 +79,14 @@ CREATE POLICY "Admins can view all profiles" ON public.profiles
 3. 註冊成功後，在 profiles 表中插入角色和用戶名資訊
 
 ### 插入用戶角色資料
-無論使用哪種方式註冊，都需要在 profiles 表中添加角色資訊：
+管理者帳號需要手動在 profiles 表中建立角色資訊。一般使用者可由登入流程在首次登入時自動建立 `role = 'user'` 的 profile。
 
 ```sql
 -- 管理員用戶範例
 INSERT INTO public.profiles (id, username, role)
 VALUES ('用戶的-uuid-這裡', 'admin_username', 'admin');
 
--- 一般用戶範例
+-- 一般用戶如需手動建立，也可使用以下方式
 INSERT INTO public.profiles (id, username, role)
 VALUES ('用戶的-uuid-這裡', 'user_username', 'user');
 ```
@@ -101,8 +101,9 @@ VALUES ('用戶的-uuid-這裡', 'user_username', 'user');
 2. 輸入已註冊的電子郵件和密碼
 3. 選擇正確的角色（admin 或 user）
 4. 點擊登入按鈕
-5. 登入成功後自動跳轉到 `index.html` 主頁面
-6. 在主頁面點擊「登出」按鈕可返回登入頁面
+5. 如果是一般使用者且尚未建立 `profiles`，系統會在首次登入時自動建立
+6. 登入成功後自動跳轉到 `index.html` 主頁面
+7. 在主頁面點擊「登出」按鈕可返回登入頁面
 
 ## 6. 測試檢查清單
 - [ ] 訪問 `login.html` 能正常顯示登入表單
@@ -118,7 +119,7 @@ VALUES ('用戶的-uuid-這裡', 'user_username', 'user');
 ### 常見問題：
 
 **Q: 登入時顯示 "角色不匹配"**
-A: 確認用戶在 profiles 表中的角色設定正確，且登入時選擇的角色與資料庫中的一致。
+A: 確認用戶在 profiles 表中的角色設定正確，且登入時選擇的角色與資料庫中的一致。若訊息提到尚未設定管理者角色，代表該帳號需要先手動建立 `role = 'admin'` 的 profile。
 
 **Q: 無法連接到 Supabase**
 A: 檢查網路連線和憑證是否正確設定。
