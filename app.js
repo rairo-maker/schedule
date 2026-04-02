@@ -208,11 +208,12 @@
     return root.innerHTML.trim();
   }
 
-  function createTrip(name, startDate, items = []) {
+  function createTrip(name, startDate, items = [], durationDays = 7) {
     return {
       id: uid(),
       name: name || DEFAULT_TRIP_NAME,
       startDate: startDate || todayYmd(),
+      durationDays: Math.min(40, Math.max(1, Number(durationDays) || 7)),
       createdAt: Date.now(),
       items: items.map(normalizeItem),
     };
@@ -236,6 +237,7 @@
       id: String(trip?.id || uid()),
       name: String(trip?.name || DEFAULT_TRIP_NAME).trim() || DEFAULT_TRIP_NAME,
       startDate: String(trip?.startDate || todayYmd()),
+      durationDays: Math.min(40, Math.max(1, Number(trip?.durationDays) || 7)),
       createdAt: Number.isFinite(Number(trip?.createdAt)) ? Number(trip.createdAt) : Date.now(),
       items: Array.isArray(trip?.items)
         ? trip.items.map(normalizeItem).filter((item) => item.title)
@@ -316,6 +318,196 @@
 
   function cloneData(source) {
     return JSON.parse(JSON.stringify(source));
+  }
+
+  function isUuid(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+  }
+
+  function toDbTimestamptz(localValue) {
+    if (!localValue) return null;
+    const normalized = localValue.includes("T") && localValue.length === 16 ? `${localValue}:00` : localValue;
+    const parsed = new Date(normalized);
+    return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
+  }
+
+  function fromDbTimestamptz(value) {
+    const parsed = new Date(value);
+    if (!Number.isFinite(parsed.getTime())) {
+      return `${todayYmd()}T${DEFAULT_TIME}`;
+    }
+    return `${toYmd(parsed)}T${pad2(parsed.getHours())}:${pad2(parsed.getMinutes())}`;
+  }
+
+  function mapTripRowToLocal(row, items = []) {
+    return normalizeTrip({
+      id: row.id,
+      name: row.name,
+      startDate: row.start_date,
+      durationDays: row.duration_days,
+      createdAt: Date.parse(row.created_at),
+      items,
+    });
+  }
+
+  function mapTripItemRowToLocal(row) {
+    return normalizeItem({
+      id: row.id,
+      startLocal: fromDbTimestamptz(row.start_local),
+      title: row.title,
+      location: row.location,
+      transport: row.transport,
+      budget: row.budget,
+      notesHtml: row.notes_html,
+      createdAt: Date.parse(row.created_at),
+    });
+  }
+
+  function saveLocalBackup(message) {
+    return writeStorage(data, message || "本機備份儲存失敗。");
+  }
+
+  function replaceTripRecord(oldTripId, nextTrip) {
+    data.trips = data.trips.map((trip) => (trip.id === oldTripId ? normalizeTrip(nextTrip) : trip));
+    if (data.activeTripId === oldTripId) {
+      data.activeTripId = nextTrip.id;
+    }
+  }
+
+  function replaceTripItemRecord(tripId, oldItemId, nextItem) {
+    data.trips = data.trips.map((trip) => {
+      if (trip.id !== tripId) return trip;
+      return {
+        ...trip,
+        items: trip.items.map((item) => (item.id === oldItemId ? normalizeItem(nextItem) : item)),
+      };
+    });
+  }
+
+  function getTripDbPayload(trip) {
+    return {
+      user_id: currentUser.id,
+      name: trip.name,
+      start_date: trip.startDate,
+      duration_days: Math.min(40, Math.max(1, Number(trip.durationDays) || 7)),
+      show_all: false,
+    };
+  }
+
+  function getTripItemDbPayload(tripId, item) {
+    return {
+      trip_id: tripId,
+      title: item.title,
+      location: item.location || "",
+      transport: item.transport || "",
+      budget: normalizeBudget(item.budget),
+      start_local: toDbTimestamptz(item.startLocal),
+      notes_html: sanitizeNotesHtml(item.notesHtml || ""),
+    };
+  }
+
+  function getErrorMessage(error, fallback = "雲端同步失敗。") {
+    return error?.message || fallback;
+  }
+
+  async function createTripInSupabase(trip) {
+    const payload = getTripDbPayload(trip);
+    const { data: row, error } = await supabaseClient
+      .from("trips")
+      .insert(payload)
+      .select("id, name, start_date, duration_days, show_all, created_at")
+      .single();
+
+    if (error) throw error;
+    return mapTripRowToLocal(row, trip.items);
+  }
+
+  async function updateTripInSupabase(trip) {
+    if (!isUuid(trip.id)) {
+      return createTripInSupabase(trip);
+    }
+
+    const payload = {
+      name: trip.name,
+      start_date: trip.startDate,
+      duration_days: Math.min(40, Math.max(1, Number(trip.durationDays) || 7)),
+    };
+
+    const { data: row, error } = await supabaseClient
+      .from("trips")
+      .update(payload)
+      .eq("id", trip.id)
+      .select("id, name, start_date, duration_days, show_all, created_at")
+      .single();
+
+    if (error) throw error;
+    return mapTripRowToLocal(row, trip.items);
+  }
+
+  async function deleteTripInSupabase(tripId) {
+    if (!isUuid(tripId)) return;
+    const { error } = await supabaseClient.from("trips").delete().eq("id", tripId);
+    if (error) throw error;
+  }
+
+  async function ensureTripSynced(trip) {
+    if (isUuid(trip.id)) return trip;
+
+    const syncedTrip = await createTripInSupabase(trip);
+    replaceTripRecord(trip.id, syncedTrip);
+    saveLocalBackup("旅程已同步到雲端，但本機備份更新失敗。");
+    return getActiveTrip().id === syncedTrip.id
+      ? getActiveTrip()
+      : data.trips.find((entry) => entry.id === syncedTrip.id) || syncedTrip;
+  }
+
+  async function upsertTripItemInSupabase(trip, item) {
+    const syncedTrip = await ensureTripSynced(trip);
+    const payload = getTripItemDbPayload(syncedTrip.id, item);
+
+    if (!payload.start_local) {
+      throw new Error("行程時間格式無效，無法同步到雲端。");
+    }
+
+    if (!isUuid(item.id)) {
+      const { data: row, error } = await supabaseClient
+        .from("trip_items")
+        .insert(payload)
+        .select("id, trip_id, title, location, transport, budget, start_local, notes_html, created_at")
+        .single();
+
+      if (error) throw error;
+      return {
+        syncedTrip,
+        syncedItem: mapTripItemRowToLocal(row),
+      };
+    }
+
+    const { data: row, error } = await supabaseClient
+      .from("trip_items")
+      .update(payload)
+      .eq("id", item.id)
+      .select("id, trip_id, title, location, transport, budget, start_local, notes_html, created_at")
+      .single();
+
+    if (error) throw error;
+    return {
+      syncedTrip,
+      syncedItem: mapTripItemRowToLocal(row),
+    };
+  }
+
+  async function deleteTripItemInSupabase(itemId) {
+    if (!isUuid(itemId)) return;
+    const { error } = await supabaseClient.from("trip_items").delete().eq("id", itemId);
+    if (error) throw error;
+  }
+
+  async function clearTripItemsInSupabase(trip) {
+    const syncedTrip = await ensureTripSynced(trip);
+    const { error } = await supabaseClient.from("trip_items").delete().eq("trip_id", syncedTrip.id);
+    if (error) throw error;
+    return syncedTrip;
   }
 
   function sortItems(items) {
@@ -559,7 +751,7 @@
     return true;
   }
 
-  function handleTripCreate() {
+  async function handleTripCreate() {
     const rawName = prompt("請輸入新旅程名稱：", `旅程 ${data.trips.length + 1}`);
     if (rawName === null) return;
     const name = rawName.trim();
@@ -580,9 +772,20 @@
     clearForm(`已新增旅程「${trip.name}」。`);
     render();
     if (isMobileViewport()) setMobileFormCollapsed(true);
+
+    try {
+      const syncedTrip = await createTripInSupabase(trip);
+      replaceTripRecord(trip.id, syncedTrip);
+      saveLocalBackup("旅程已同步到雲端，但本機備份更新失敗。");
+      renderTripSelect();
+      render();
+      clearForm(`已新增旅程「${syncedTrip.name}」，並同步到雲端。`);
+    } catch (error) {
+      setStatus("warn", `旅程已先保存於本機，雲端同步失敗：${getErrorMessage(error)}`);
+    }
   }
 
-  function handleTripRename() {
+  async function handleTripRename() {
     const activeTrip = getActiveTrip();
     const rawName = prompt("請輸入新的旅程名稱：", activeTrip.name);
     if (rawName === null) return;
@@ -595,9 +798,20 @@
     if (!commitActiveTrip(nextTrip, `已重新命名為「${name}」。`)) return;
     renderTripSelect();
     render();
+
+    try {
+      const syncedTrip = await updateTripInSupabase(nextTrip);
+      replaceTripRecord(nextTrip.id, syncedTrip);
+      saveLocalBackup("旅程名稱已同步到雲端，但本機備份更新失敗。");
+      renderTripSelect();
+      render();
+      setStatus("ok", `已更新旅程名稱為「${syncedTrip.name}」，並同步到雲端。`);
+    } catch (error) {
+      setStatus("warn", `旅程名稱已先保存於本機，雲端同步失敗：${getErrorMessage(error)}`);
+    }
   }
 
-  function handleTripDelete() {
+  async function handleTripDelete() {
     const activeTrip = getActiveTrip();
     if (data.trips.length === 1) {
       setStatus("bad", "至少要保留一個旅程。");
@@ -616,6 +830,13 @@
     renderTripSelect();
     clearForm(`已刪除旅程「${activeTrip.name}」。`);
     render();
+
+    try {
+      await deleteTripInSupabase(activeTrip.id);
+      setStatus("ok", `已刪除旅程「${activeTrip.name}」，並同步到雲端。`);
+    } catch (error) {
+      setStatus("warn", `旅程已先從本機移除，雲端同步失敗：${getErrorMessage(error)}`);
+    }
   }
 
   async function handleLogout() {
@@ -700,7 +921,7 @@
     }
   }
 
-  function clearActiveTripItems() {
+  async function clearActiveTripItems() {
     const activeTrip = getActiveTrip();
     const ok = confirm(`確定清空旅程「${activeTrip.name}」的所有行程？\n（建議先匯出備份）`);
     if (!ok) return;
@@ -709,6 +930,13 @@
     if (!commitActiveTrip(nextTrip, `已清空「${activeTrip.name}」的所有行程。`)) return;
     clearForm();
     render();
+
+    try {
+      await clearTripItemsInSupabase(activeTrip);
+      setStatus("ok", `已清空旅程「${activeTrip.name}」的行程，並同步到雲端。`);
+    } catch (error) {
+      setStatus("warn", `行程已先從本機清空，雲端同步失敗：${getErrorMessage(error)}`);
+    }
   }
 
   function wireEvents() {
@@ -729,12 +957,23 @@
     els.btnRenameTrip.addEventListener("click", handleTripRename);
     els.btnDeleteTrip.addEventListener("click", handleTripDelete);
 
-    els.startDate.addEventListener("change", () => {
+    els.startDate.addEventListener("change", async () => {
       const activeTrip = getActiveTrip();
       const nextTrip = { ...activeTrip, startDate: els.startDate.value || activeTrip.startDate };
       if (!commitActiveTrip(nextTrip)) return;
       if (!editingId) els.date.value = nextTrip.startDate;
       render();
+
+      try {
+        const syncedTrip = await updateTripInSupabase(nextTrip);
+        replaceTripRecord(nextTrip.id, syncedTrip);
+        saveLocalBackup("旅程起始日已同步到雲端，但本機備份更新失敗。");
+        renderTripSelect();
+        render();
+        setStatus("ok", "已更新旅程起始日，並同步到雲端。");
+      } catch (error) {
+        setStatus("warn", `起始日已先保存於本機，雲端同步失敗：${getErrorMessage(error)}`);
+      }
     });
 
     els.toggleShowAll.addEventListener("change", () => {
@@ -759,10 +998,11 @@
       if (!isOther) els.transportCustom.value = "";
     });
 
-    els.form.addEventListener("submit", (event) => {
+    els.form.addEventListener("submit", async (event) => {
       event.preventDefault();
 
       const activeTrip = getActiveTrip();
+      const originalEditingId = editingId;
       const date = els.date.value;
       const time = els.time.value;
       const title = els.title.value.trim();
@@ -821,6 +1061,21 @@
       render();
       clearForm(successMessage);
       if (isMobileViewport()) setMobileFormCollapsed(true);
+
+      try {
+        const localItem = originalEditingId
+          ? nextItems.find((item) => item.id === originalEditingId)
+          : nextItems[nextItems.length - 1];
+        const { syncedTrip, syncedItem } = await upsertTripItemInSupabase(nextTrip, localItem);
+        replaceTripRecord(nextTrip.id, syncedTrip);
+        replaceTripItemRecord(syncedTrip.id, localItem.id, syncedItem);
+        saveLocalBackup("行程已同步到雲端，但本機備份更新失敗。");
+        renderTripSelect();
+        render();
+        clearForm(originalEditingId ? "已更新行程，並同步到雲端。" : "已新增行程，並同步到雲端。");
+      } catch (error) {
+        setStatus("warn", `行程已先保存於本機，雲端同步失敗：${getErrorMessage(error)}`);
+      }
     });
 
     els.btnCancelEdit.addEventListener("click", () => {
@@ -828,7 +1083,7 @@
       if (isMobileViewport()) setMobileFormCollapsed(true);
     });
 
-    els.btnDelete.addEventListener("click", () => {
+    els.btnDelete.addEventListener("click", async () => {
       if (!editingId) return;
       const activeTrip = getActiveTrip();
       const target = activeTrip.items.find((item) => item.id === editingId);
@@ -847,6 +1102,13 @@
       clearForm("已刪除行程。");
       if (isMobileViewport()) setMobileFormCollapsed(true);
       render();
+
+      try {
+        await deleteTripItemInSupabase(target.id);
+        setStatus("ok", "已刪除行程，並同步到雲端。");
+      } catch (error) {
+        setStatus("warn", `行程已先從本機移除，雲端同步失敗：${getErrorMessage(error)}`);
+      }
     });
 
     els.btnLink.addEventListener("click", () => {
