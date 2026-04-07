@@ -1,12 +1,12 @@
 ﻿(() => {
   const loadingOverlay = document.getElementById("loading");
 
-  // Supabase ????(隢??函? Supabase URL ??API Key)
-  const SUPABASE_URL = 'https://vztealcurhcjvkrrtvui.supabase.co'; // ?踵??箸??Supabase URL
-  const SUPABASE_ANON_KEY = 'sb_publishable_aLGlNwheFAthxrd0LReqQg_H0XfStht'; // ?踵??箸??Supabase Anon Key
+  // Supabase 初始化 (請替換為您的 Supabase URL 和 API Key)
+  const SUPABASE_URL = 'https://vztealcurhcjvkrrtvui.supabase.co'; // 替換為您的 Supabase URL
+  const SUPABASE_ANON_KEY = 'sb_publishable_aLGlNwheFAthxrd0LReqQg_H0XfStht'; // 替換為您的 Supabase Anon Key
   if (!window.supabase?.createClient) {
     if (loadingOverlay) {
-      loadingOverlay.innerHTML = "<p>Supabase SDK 頛憭望?嚗???渡??敺?閰艾?/p>";
+      loadingOverlay.innerHTML = "<p>Supabase SDK 載入失敗，請重新整理頁面後再試。</p>";
     }
     throw new Error("Supabase SDK not loaded");
   }
@@ -15,7 +15,7 @@
   const STORAGE_KEY = "tripPlanner.v2.data";
   const LEGACY_ITEMS_KEY = "tripPlanner.v1.items";
   const LEGACY_SETTINGS_KEY = "tripPlanner.v1.settings";
-  const DEFAULT_TRIP_NAME = "????";
+  const DEFAULT_TRIP_NAME = "我的旅程";
   const DEFAULT_TIME = "09:00";
   const currencyFormatter = new Intl.NumberFormat("zh-TW", {
     style: "currency",
@@ -63,7 +63,7 @@
     summaryTransports: document.getElementById("summaryTransports"),
     summaryLocations: document.getElementById("summaryLocations"),
 
-    // 頛?賊?
+    // 載入相關
     loading: loadingOverlay,
     btnLogout: document.getElementById("btnLogout"),
   };
@@ -109,13 +109,13 @@
   function normalizeStorageError(error) {
     if (error instanceof DOMException) {
       if (error.name === "QuotaExceededError") {
-        return "?祆??脣?蝛粹?撌脫遛嚗???日??蝔??臬敺?蝛箝?;
+        return "本機儲存空間已滿，請先刪除部分行程或匯出後清空。";
       }
       if (error.name === "SecurityError") {
-        return "?桀??汗?函憓?甇Ｘ璈摮?隢?其??祉汗璅∪??岫??;
+        return "目前瀏覽器環境禁止本機儲存，請改用一般瀏覽模式再試。";
       }
     }
-    return "?祆??脣?憭望?嚗?蝣箄??汗?典?閮?localStorage??;
+    return "本機儲存失敗，請確認瀏覽器允許 localStorage。";
   }
 
   function writeStorage(payload, fallbackMessage) {
@@ -263,7 +263,7 @@
       const settings = rawSettings ? JSON.parse(rawSettings) : null;
       if (!Array.isArray(items) || items.length === 0) return null;
       const trip = createTrip(DEFAULT_TRIP_NAME, settings?.startDate || todayYmd(), items);
-      rememberStartupStatus("warn", "撌脣???鞈????箏????澆???);
+      rememberStartupStatus("warn", "已將舊版資料升級為多旅程格式。");
       return {
         version: 2,
         activeTripId: trip.id,
@@ -303,7 +303,7 @@
       try {
         localStorage.removeItem(STORAGE_KEY);
       } catch {}
-      rememberStartupStatus("warn", "撌脫??斗?憯?鞈?嚗?典隞仿??啣摮?);
+      rememberStartupStatus("warn", "已清除損壞的資料，現在可以重新儲存。");
       return createDefaultData();
     }
   }
@@ -364,7 +364,7 @@
   }
 
   function saveLocalBackup(message) {
-    return writeStorage(data, message || "?祆??遢?脣?憭望???);
+    return writeStorage(data, message || "本機備份儲存失敗。");
   }
 
   function replaceTripRecord(oldTripId, nextTrip) {
@@ -406,7 +406,7 @@
     };
   }
 
-  function getErrorMessage(error, fallback = "?脩垢?郊憭望???) {
+  function getErrorMessage(error, fallback = "雲端同步失敗。") {
     return error?.message || fallback;
   }
 
@@ -431,9 +431,9 @@
 
     const itemsByTripId = new Map();
     for (const row of itemRows || []) {
-      const nextItems = itemsByTripId.get(row.trip_id) || [];
-      nextItems.push(mapTripItemRowToLocal(row));
-      itemsByTripId.set(row.trip_id, nextItems);
+      const existingItems = itemsByTripId.get(row.trip_id) || [];
+      existingItems.push(mapTripItemRowToLocal(row));
+      itemsByTripId.set(row.trip_id, existingItems);
     }
 
     const trips = tripRows.map((row) => mapTripRowToLocal(row, itemsByTripId.get(row.id) || []));
@@ -496,7 +496,7 @@
 
     const syncedTrip = await createTripInSupabase(trip);
     replaceTripRecord(trip.id, syncedTrip);
-    saveLocalBackup("??撌脣?甇亙?脩垢嚗??祆??遢?湔憭望???);
+    saveLocalBackup("旅程已同步到雲端，但本機備份更新失敗。");
     return getActiveTrip().id === syncedTrip.id
       ? getActiveTrip()
       : data.trips.find((entry) => entry.id === syncedTrip.id) || syncedTrip;
@@ -507,7 +507,7 @@
     const payload = getTripItemDbPayload(syncedTrip.id, item);
 
     if (!payload.start_local) {
-      throw new Error("銵????澆??⊥?嚗瘜?甇亙?脩垢??);
+      throw new Error("行程時間格式無效，無法同步到雲端。");
     }
 
     if (!isUuid(item.id)) {
@@ -572,22 +572,22 @@
   }
 
   function getTransportValue() {
-    if (els.transport.value === "?嗡?") {
+    if (els.transport.value === "其他") {
       const custom = els.transportCustom.value.trim();
-      return custom || "?嗡?";
+      return custom || "其他";
     }
     return els.transport.value;
   }
 
   function setTransportValue(value) {
-    const known = ["甇亥?", "?琿?", "?怨?", "擃", "閮?頠?, "?芷?", "憌?", "?嗡?"];
+    const known = ["步行", "捷運", "火車", "高鐵", "計程車", "自駕", "飛機", "其他"];
     if (known.includes(value)) {
       els.transport.value = value;
       els.transportCustom.value = "";
-      els.transportCustom.disabled = value !== "?嗡?";
+      els.transportCustom.disabled = value !== "其他";
       return;
     }
-    els.transport.value = "?嗡?";
+    els.transport.value = "其他";
     els.transportCustom.value = value || "";
     els.transportCustom.disabled = false;
   }
@@ -601,7 +601,7 @@
     const collapsed = isMobileViewport() ? mobileFormCollapsed : false;
     els.plannerForm.classList.toggle("is-collapsed", collapsed);
     els.toggleFormPanel.setAttribute("aria-expanded", String(!collapsed));
-    els.toggleFormPanel.textContent = collapsed ? "撅?銵典" : "?嗅?銵典";
+    els.toggleFormPanel.textContent = collapsed ? "展開表單" : "收合表單";
   }
 
   function setMobileFormCollapsed(collapsed) {
@@ -615,13 +615,13 @@
     els.plannerForm.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  function clearForm(statusText = "?啣?璅∪?嚗‵銵典??摮?蝔?) {
+  function clearForm(statusText = "新增模式：填表後按「儲存行程」。") {
     const activeTrip = getActiveTrip();
     editingId = null;
     els.form.reset();
     els.date.value = activeTrip.startDate;
     els.time.value = DEFAULT_TIME;
-    els.transport.value = "甇亥?";
+    els.transport.value = "步行";
     els.transportCustom.value = "";
     els.transportCustom.disabled = true;
     els.budget.value = "";
@@ -638,11 +638,11 @@
     els.time.value = (timePart || DEFAULT_TIME).slice(0, 5);
     els.title.value = item.title || "";
     els.location.value = item.location || "";
-    setTransportValue(item.transport || "甇亥?");
+    setTransportValue(item.transport || "步行");
     els.budget.value = item.budget ? String(item.budget) : "";
     els.notesEditor.innerHTML = sanitizeNotesHtml(item.notesHtml || "");
     els.btnDelete.disabled = false;
-    setStatus("warn", "蝺刻摩璅∪?嚗耨?孵??摮?蝔?????瘨楊頛胯?);
+    setStatus("warn", "編輯模式：修改後按「儲存行程」，或按「取消編輯」。");
   }
 
   function renderTripSelect() {
@@ -661,16 +661,16 @@
     const uniqueTransports = [...new Set(visibleItems.map((item) => item.transport).filter(Boolean))];
 
     els.summaryTripName.textContent = activeTrip.name;
-    els.summaryTripRange.textContent = `${days[0].toLocaleDateString()} ??${days[6].toLocaleDateString()}`;
+    els.summaryTripRange.textContent = `${days[0].toLocaleDateString()} → ${days[6].toLocaleDateString()}`;
     els.summaryBudget.textContent = formatCurrency(totalBudget);
     els.summaryBudgetAverage.textContent = visibleItems.length
-      ? `撟喳?瘥? ${formatCurrency(avgBudget)}`
-      : "撠憛怠神??";
-    els.summaryItemCount.textContent = `${visibleItems.length} 蝑;
+      ? `平均每項 ${formatCurrency(avgBudget)}`
+      : "尚未填寫預算";
+    els.summaryItemCount.textContent = `${visibleItems.length} 筆`;
     els.summaryTransports.textContent = uniqueTransports.length
       ? uniqueTransports.join(" / ")
-      : "撠閮剖?鈭日?;
-    els.summaryLocations.textContent = `${locationCount} 蝑暺;
+      : "尚未設定交通";
+    els.summaryLocations.textContent = `${locationCount} 筆地點`;
   }
 
   function render() {
@@ -690,7 +690,7 @@
 
     const hiddenCount = sortedItems.length - visibleItems.length;
     els.metaCount.textContent = `Items: ${sortedItems.length}${hiddenCount ? ` (hidden ${hiddenCount})` : ""}`;
-    els.metaRange.textContent = `${days[0].toLocaleDateString()} ??${days[6].toLocaleDateString()}`;
+    els.metaRange.textContent = `${days[0].toLocaleDateString()} → ${days[6].toLocaleDateString()}`;
     renderSummary(activeTrip, visibleItems, days);
 
     const buckets = new Map();
@@ -713,7 +713,7 @@
       section.className = "day";
       section.innerHTML = `
         <div class="day__head">
-          <div class="day__date">${escapeHtml(showAll ? "?券?交?" : dayDate.toLocaleDateString())}</div>
+          <div class="day__date">${escapeHtml(showAll ? "全部日期" : dayDate.toLocaleDateString())}</div>
           <div class="day__dow">${escapeHtml(showAll ? activeTrip.name : formatDow(dayDate))}</div>
         </div>
         <div class="day__list"></div>
@@ -723,7 +723,7 @@
       if (!items.length) {
         const empty = document.createElement("div");
         empty.className = "hint";
-        empty.textContent = showAll ? "?桀?瘝?隞颱?銵??? : "??憭拇???蝔??臭誑?啣?銝蝑?嚗?;
+        empty.textContent = showAll ? "目前沒有任何行程。" : "這一天沒有行程（可以新增一筆！）。";
         list.appendChild(empty);
       } else {
         for (const item of items) {
@@ -738,16 +738,16 @@
           card.className = "card";
           card.tabIndex = 0;
           card.setAttribute("role", "button");
-          card.setAttribute("aria-label", `蝺刻摩銵?嚗?{item.title}`);
+          card.setAttribute("aria-label", `編輯行程：${item.title}`);
           card.dataset.id = item.id;
           card.innerHTML = `
             <div class="card__top">
               <div class="timeBadge">${escapeHtml(timeText)}</div>
-              <div class="tag ${item.transport ? "tag--acid" : ""}">${escapeHtml(item.transport || "?芸‵鈭日?)}</div>
+              <div class="tag ${item.transport ? "tag--acid" : ""}">${escapeHtml(item.transport || "未填交通")}</div>
             </div>
             <div class="card__title">${escapeHtml(item.title)}</div>
             <div class="card__row">
-              <div class="tag ${item.location ? "tag--hot" : ""}">${escapeHtml(item.location || "?芸‵?圈?")}</div>
+              <div class="tag ${item.location ? "tag--hot" : ""}">${escapeHtml(item.location || "未填地點")}</div>
               ${budgetBadge}
             </div>
             ${notes ? `<div class="card__notes">${notes}</div>` : ""}
@@ -793,11 +793,11 @@
   }
 
   async function handleTripCreate() {
-    const rawName = prompt("隢撓?交???迂嚗?, `?? ${data.trips.length + 1}`);
+    const rawName = prompt("請輸入新旅程名稱：", `旅程 ${data.trips.length + 1}`);
     if (rawName === null) return;
     const name = rawName.trim();
     if (!name) {
-      setStatus("bad", "???迂銝?箇征??);
+      setStatus("bad", "旅程名稱不能為空。");
       return;
     }
 
@@ -810,55 +810,55 @@
       return;
     }
     renderTripSelect();
-    clearForm(`撌脫憓?蝔?{trip.name}?);
+    clearForm(`已新增旅程「${trip.name}」。`);
     render();
     if (isMobileViewport()) setMobileFormCollapsed(true);
 
     try {
       const syncedTrip = await createTripInSupabase(trip);
       replaceTripRecord(trip.id, syncedTrip);
-      saveLocalBackup("??撌脣?甇亙?脩垢嚗??祆??遢?湔憭望???);
+      saveLocalBackup("旅程已同步到雲端，但本機備份更新失敗。");
       renderTripSelect();
       render();
-      clearForm(`撌脫憓?蝔?{syncedTrip.name}??銝血?甇亙?脩垢?);
+      clearForm(`已新增旅程「${syncedTrip.name}」，並同步到雲端。`);
     } catch (error) {
-      setStatus("warn", `??撌脣?靽??潭璈??脩垢?郊憭望?嚗?{getErrorMessage(error)}`);
+      setStatus("warn", `旅程已先保存於本機，雲端同步失敗：${getErrorMessage(error)}`);
     }
   }
 
   async function handleTripRename() {
     const activeTrip = getActiveTrip();
-    const rawName = prompt("隢撓?交??蝔?蝔梧?", activeTrip.name);
+    const rawName = prompt("請輸入新的旅程名稱：", activeTrip.name);
     if (rawName === null) return;
     const name = rawName.trim();
     if (!name) {
-      setStatus("bad", "???迂銝?箇征??);
+      setStatus("bad", "旅程名稱不能為空。");
       return;
     }
     const nextTrip = { ...activeTrip, name };
-    if (!commitActiveTrip(nextTrip, `撌脤??啣???{name}?)) return;
+    if (!commitActiveTrip(nextTrip, `已重新命名為「${name}」。`)) return;
     renderTripSelect();
     render();
 
     try {
       const syncedTrip = await updateTripInSupabase(nextTrip);
       replaceTripRecord(nextTrip.id, syncedTrip);
-      saveLocalBackup("???迂撌脣?甇亙?脩垢嚗??祆??遢?湔憭望???);
+      saveLocalBackup("旅程名稱已同步到雲端，但本機備份更新失敗。");
       renderTripSelect();
       render();
-      setStatus("ok", `撌脫?唳?蝔?蝔梁??{syncedTrip.name}??銝血?甇亙?脩垢?);
+      setStatus("ok", `已更新旅程名稱為「${syncedTrip.name}」，並同步到雲端。`);
     } catch (error) {
-      setStatus("warn", `???迂撌脣?靽??潭璈??脩垢?郊憭望?嚗?{getErrorMessage(error)}`);
+      setStatus("warn", `旅程名稱已先保存於本機，雲端同步失敗：${getErrorMessage(error)}`);
     }
   }
 
   async function handleTripDelete() {
     const activeTrip = getActiveTrip();
     if (data.trips.length === 1) {
-      setStatus("bad", "?喳?閬?????蝔?);
+      setStatus("bad", "至少要保留一個旅程。");
       return;
     }
-    const ok = confirm(`蝣箏??芷????{activeTrip.name}??\n\n???芷閰脫?蝔?銝???蝔);
+    const ok = confirm(`確定刪除旅程「${activeTrip.name}」？\n\n這會刪除該旅程底下所有行程。`);
     if (!ok) return;
 
     const previousData = cloneData(data);
@@ -869,14 +869,14 @@
       return;
     }
     renderTripSelect();
-    clearForm(`撌脣?斗?蝔?{activeTrip.name}?);
+    clearForm(`已刪除旅程「${activeTrip.name}」。`);
     render();
 
     try {
       await deleteTripInSupabase(activeTrip.id);
-      setStatus("ok", `撌脣?斗?蝔?{activeTrip.name}??銝血?甇亙?脩垢?);
+      setStatus("ok", `已刪除旅程「${activeTrip.name}」，並同步到雲端。`);
     } catch (error) {
-      setStatus("warn", `??撌脣?敺璈宏?歹??脩垢?郊憭望?嚗?{getErrorMessage(error)}`);
+      setStatus("warn", `旅程已先從本機移除，雲端同步失敗：${getErrorMessage(error)}`);
     }
   }
 
@@ -899,7 +899,7 @@
     anchor.click();
     anchor.remove();
     setTimeout(() => URL.revokeObjectURL(anchor.href), 1000);
-    setStatus("ok", "撌脣?箸???蝔???);
+    setStatus("ok", "已匯出所有旅程資料。");
   }
 
   async function importData() {
@@ -919,12 +919,12 @@
                 version: 2,
                 activeTripId: null,
                 ui: { showAll: false },
-                trips: [createTrip("?臬??", todayYmd(), parsed.items)],
+                trips: [createTrip("匯入旅程", todayYmd(), parsed.items)],
               }
             : null;
 
       if (!incomingData) {
-        setStatus("bad", "?臬憭望?嚗?獢摰嫣??舀?渡????澆???);
+        setStatus("bad", "匯入失敗：檔案內容不是支援的旅程格式。");
         return;
       }
 
@@ -936,7 +936,7 @@
       };
 
       if (!normalized.trips.length) {
-        setStatus("bad", "?臬憭望?嚗銝?舐????);
+        setStatus("bad", "匯入失敗：找不到可用旅程。");
         return;
       }
 
@@ -944,7 +944,7 @@
         normalized.activeTripId = normalized.trips[0].id;
       }
 
-      const ok = confirm(`?臬 ${normalized.trips.length} ??蝔?撠???????);
+      const ok = confirm(`匯入 ${normalized.trips.length} 個旅程，將覆蓋目前所有資料。`);
       if (!ok) return;
 
       const previousData = cloneData(data);
@@ -955,28 +955,28 @@
       }
 
       renderTripSelect();
-      clearForm("撌脣?交?蝔???);
+      clearForm("已匯入旅程資料。");
       render();
     } catch {
-      setStatus("bad", "?臬憭望?嚗?獢??舀???JSON??);
+      setStatus("bad", "匯入失敗：檔案不是有效 JSON。");
     }
   }
 
   async function clearActiveTripItems() {
     const activeTrip = getActiveTrip();
-    const ok = confirm(`蝣箏?皜征????{activeTrip.name}?????蝔?\n嚗遣霅啣??臬?遢嚗);
+    const ok = confirm(`確定清空旅程「${activeTrip.name}」的所有行程？\n（建議先匯出備份）`);
     if (!ok) return;
 
     const nextTrip = { ...activeTrip, items: [] };
-    if (!commitActiveTrip(nextTrip, `撌脫?蝛箝?{activeTrip.name}?????蝔)) return;
+    if (!commitActiveTrip(nextTrip, `已清空「${activeTrip.name}」的所有行程。`)) return;
     clearForm();
     render();
 
     try {
       await clearTripItemsInSupabase(activeTrip);
-      setStatus("ok", `撌脫?蝛箸?蝔?{activeTrip.name}??銵?嚗蒂?郊?圈蝡胯);
+      setStatus("ok", `已清空旅程「${activeTrip.name}」的行程，並同步到雲端。`);
     } catch (error) {
-      setStatus("warn", `銵?撌脣?敺璈?蝛綽??脩垢?郊憭望?嚗?{getErrorMessage(error)}`);
+      setStatus("warn", `行程已先從本機清空，雲端同步失敗：${getErrorMessage(error)}`);
     }
   }
 
@@ -984,12 +984,12 @@
     els.tripSelect.addEventListener("change", () => {
       const previousData = cloneData(data);
       data.activeTripId = els.tripSelect.value;
-      if (!saveData("????憭望?嚗?蝔??岫??)) {
+      if (!saveData("切換旅程失敗，請稍後再試。")) {
         data = previousData;
         renderTripSelect();
         return;
       }
-      clearForm(`撌脣????{getActiveTrip().name}?);
+      clearForm(`已切換到「${getActiveTrip().name}」。`);
       render();
       if (isMobileViewport()) setMobileFormCollapsed(true);
     });
@@ -1008,19 +1008,19 @@
       try {
         const syncedTrip = await updateTripInSupabase(nextTrip);
         replaceTripRecord(nextTrip.id, syncedTrip);
-        saveLocalBackup("??韏瑕??亙歇?郊?圈蝡荔?雿璈?隞賣?啣仃??);
+        saveLocalBackup("旅程起始日已同步到雲端，但本機備份更新失敗。");
         renderTripSelect();
         render();
-        setStatus("ok", "撌脫?唳?蝔絲憪嚗蒂?郊?圈蝡胯?);
+        setStatus("ok", "已更新旅程起始日，並同步到雲端。");
       } catch (error) {
-        setStatus("warn", `韏瑕??亙歇??摮?祆?嚗蝡臬?甇亙仃??${getErrorMessage(error)}`);
+        setStatus("warn", `起始日已先保存於本機，雲端同步失敗：${getErrorMessage(error)}`);
       }
     });
 
     els.toggleShowAll.addEventListener("change", () => {
       const previousData = cloneData(data);
       data.ui.showAll = els.toggleShowAll.checked;
-      if (!saveData("瑼Ｚ?閮剖??脣?憭望???)) {
+      if (!saveData("檢視設定儲存失敗。")) {
         data = previousData;
         return;
       }
@@ -1034,7 +1034,7 @@
     }
 
     els.transport.addEventListener("change", () => {
-      const isOther = els.transport.value === "?嗡?";
+      const isOther = els.transport.value === "其他";
       els.transportCustom.disabled = !isOther;
       if (!isOther) els.transportCustom.value = "";
     });
@@ -1053,23 +1053,23 @@
       const notesHtml = sanitizeNotesHtml(els.notesEditor.innerHTML);
 
       if (!date || !time || !title) {
-        setStatus("bad", "隢撠‵嚗????蝔?蝔晞?);
+        setStatus("bad", "請至少填：日期、時間、行程名稱。");
         return;
       }
 
       const startLocal = `${date}T${time}`;
       if (!Number.isFinite(parseStartTs(startLocal))) {
-        setStatus("bad", "?交? / ???澆??⊥?閫??嚗???豢???);
+        setStatus("bad", "日期 / 時間格式無法解析，請重新選擇。");
         return;
       }
 
       const nextItems = [...activeTrip.items];
-      let successMessage = "撌脫憓?蝔?銝西??摨?;
+      let successMessage = "已新增行程，並自動排序。";
 
       if (editingId) {
         const index = nextItems.findIndex((item) => item.id === editingId);
         if (index === -1) {
-          setStatus("bad", "?曆??啗?蝺刻摩??蝔??航撌脰◤?芷嚗?);
+          setStatus("bad", "找不到要編輯的行程（可能已被刪除）。");
           clearForm();
           render();
           return;
@@ -1083,7 +1083,7 @@
           budget,
           notesHtml,
         };
-        successMessage = "撌脫?啗?蝔?銝西??摨?;
+        successMessage = "已更新行程，並自動排序。";
       } else {
         nextItems.push({
           id: uid(),
@@ -1110,12 +1110,12 @@
         const { syncedTrip, syncedItem } = await upsertTripItemInSupabase(nextTrip, localItem);
         replaceTripRecord(nextTrip.id, syncedTrip);
         replaceTripItemRecord(syncedTrip.id, localItem.id, syncedItem);
-        saveLocalBackup("銵?撌脣?甇亙?脩垢嚗??祆??遢?湔憭望???);
+        saveLocalBackup("行程已同步到雲端，但本機備份更新失敗。");
         renderTripSelect();
         render();
-        clearForm(originalEditingId ? "撌脫?啗?蝔?銝血?甇亙?脩垢?? : "撌脫憓?蝔?銝血?甇亙?脩垢??);
+        clearForm(originalEditingId ? "已更新行程，並同步到雲端。" : "已新增行程，並同步到雲端。");
       } catch (error) {
-        setStatus("warn", `銵?撌脣?靽??潭璈??脩垢?郊憭望?嚗?{getErrorMessage(error)}`);
+        setStatus("warn", `行程已先保存於本機，雲端同步失敗：${getErrorMessage(error)}`);
       }
     });
 
@@ -1133,76 +1133,77 @@
         render();
         return;
       }
-      const ok = confirm(`蝣箏??芷??銵?嚗n\n${target.startLocal}\n${target.title}`);
+      const ok = confirm(`確定刪除這筆行程？\n\n${target.startLocal}\n${target.title}`);
       if (!ok) return;
       const nextTrip = {
         ...activeTrip,
         items: activeTrip.items.filter((item) => item.id !== editingId),
       };
-      if (!commitActiveTrip(nextTrip, "撌脣?方?蝔?)) return;
-      clearForm("撌脣?方?蝔?);
+      if (!commitActiveTrip(nextTrip, "已刪除行程。")) return;
+      clearForm("已刪除行程。");
       if (isMobileViewport()) setMobileFormCollapsed(true);
       render();
 
       try {
         await deleteTripItemInSupabase(target.id);
-        setStatus("ok", "撌脣?方?蝔?銝血?甇亙?脩垢??);
+        setStatus("ok", "已刪除行程，並同步到雲端。");
       } catch (error) {
-        setStatus("warn", `銵?撌脣?敺璈宏?歹??脩垢?郊憭望?嚗?{getErrorMessage(error)}`);
+        setStatus("warn", `行程已先從本機移除，雲端同步失敗：${getErrorMessage(error)}`);
       }
     });
 
     els.btnLink.addEventListener("click", () => {
       const url = (els.linkUrl.value || "").trim();
       if (!isValidHttpUrl(url)) {
-        setStatus("bad", "隢撓?交??雯?嚗ttp:// ??https://嚗?);
+        setStatus("bad", "請輸入有效網址（http:// 或 https://）。");
         return;
       }
 
       const selection = document.getSelection();
       if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-        setStatus("bad", "隢??典?閮餅??詨?銝畾菜?摮?);
+        setStatus("bad", "請先在備註欄選取一段文字。");
         return;
       }
 
       const range = selection.getRangeAt(0);
       if (!els.notesEditor.contains(range.commonAncestorContainer)) {
-        setStatus("bad", "隢?酉甈?詨???敺?憟?????);
+        setStatus("bad", "請在備註欄內選取文字後再套用連結。");
         return;
       }
 
       els.notesEditor.focus();
       document.execCommand("createLink", false, url);
       els.notesEditor.innerHTML = sanitizeNotesHtml(els.notesEditor.innerHTML);
-      setStatus("ok", "撌脣??券??嚗摮?蝔???????);
+      setStatus("ok", "已套用連結（儲存行程後會保留）。");
     });
 
     els.btnUnlink.addEventListener("click", () => {
       els.notesEditor.focus();
       document.execCommand("unlink", false, null);
       els.notesEditor.innerHTML = sanitizeNotesHtml(els.notesEditor.innerHTML);
-      setStatus("ok", "撌脩宏?日????);
+      setStatus("ok", "已移除連結。");
     });
 
     els.btnExport.addEventListener("click", exportData);
     els.importFile.addEventListener("change", importData);
     els.btnClear.addEventListener("click", clearActiveTripItems);
 
-    // ?餃鈭辣
+    // 登出事件
     els.btnLogout.addEventListener("click", handleLogout);
 
     window.addEventListener("resize", syncFormPanelUi);
   }
 
   async function init() {
-    // 瑼Ｘ?餃???    const { data: { session } } = await supabaseClient.auth.getSession();
+    // 檢查登入狀態
+    const { data: { session } } = await supabaseClient.auth.getSession();
     if (!session) {
-      // ?芰?伐?????餃?
+      // 未登入，重定向到登入頁面
       window.location.href = 'login.html';
       return;
     }
 
-    // 瑼Ｘ?冽閫
+    // 檢查用戶角色
     const { data: userData, error: userError } = await supabaseClient
       .from('profiles')
       .select('role')
@@ -1216,8 +1217,6 @@
     }
 
     currentUser = { ...session.user, role: userData.role };
-
-    // ?梯?頛?桃蔗
 
     data = loadData();
     try {
@@ -1234,7 +1233,10 @@
     } catch (error) {
       rememberStartupStatus("warn", `雲端資料讀取失敗，已改用本機備援：${getErrorMessage(error, "讀取 Supabase 失敗。")}`);
     }
+
+    // 隱藏載入遮罩
     els.loading.style.display = 'none';
+
     mobileFormCollapsed = isMobileViewport();
     renderTripSelect();
     wireEvents();
@@ -1242,7 +1244,7 @@
     if (startupStatus) {
       setStatus(startupStatus.kind, startupStatus.text);
     } else {
-      setStatus("ok", `甇∟? ${userData.role === 'admin' ? '蝞∠??? : '雿輻??} ${session.user.email}`);
+      setStatus("ok", `歡迎 ${userData.role === 'admin' ? '管理者' : '使用者'} ${session.user.email}`);
     }
     syncFormPanelUi();
     render();
