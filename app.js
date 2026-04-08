@@ -31,6 +31,8 @@
     startDate: document.getElementById("startDate"),
     toggleShowAll: document.getElementById("toggleShowAll"),
     btnExport: document.getElementById("btnExport"),
+    btnSyncCloud: document.getElementById("btnSyncCloud"),
+    btnRefreshData: document.getElementById("btnRefreshData"),
     importFile: document.getElementById("importFile"),
     btnClear: document.getElementById("btnClear"),
 
@@ -363,6 +365,57 @@
     });
   }
 
+  function mergeTripItems(remoteItems = [], localItems = []) {
+    const mergedItems = remoteItems.map(normalizeItem);
+    const knownIds = new Set(mergedItems.map((item) => item.id));
+
+    for (const localItem of localItems.map(normalizeItem)) {
+      if (knownIds.has(localItem.id)) continue;
+      mergedItems.push(localItem);
+      knownIds.add(localItem.id);
+    }
+
+    return sortItems(mergedItems);
+  }
+
+  function mergeLocalBackupIntoRemote(localData, remoteData) {
+    if (!remoteData?.trips?.length) return localData;
+    if (!localData?.trips?.length) return remoteData;
+
+    const localTrips = localData.trips.map(normalizeTrip);
+    const remoteTrips = remoteData.trips.map(normalizeTrip);
+    const localTripMap = new Map(localTrips.map((trip) => [trip.id, trip]));
+    const remoteTripIds = new Set(remoteTrips.map((trip) => trip.id));
+
+    const mergedTrips = remoteTrips.map((remoteTrip) => {
+      const localTrip = localTripMap.get(remoteTrip.id);
+      if (!localTrip) return remoteTrip;
+
+      return normalizeTrip({
+        ...remoteTrip,
+        items: mergeTripItems(remoteTrip.items, localTrip.items),
+      });
+    });
+
+    for (const localTrip of localTrips) {
+      if (remoteTripIds.has(localTrip.id)) continue;
+      mergedTrips.push(localTrip);
+    }
+
+    const activeTripId = mergedTrips.some((trip) => trip.id === localData.activeTripId)
+      ? localData.activeTripId
+      : remoteData.activeTripId;
+
+    return {
+      version: 2,
+      activeTripId: activeTripId || mergedTrips[0]?.id,
+      ui: {
+        showAll: Boolean(localData?.ui?.showAll),
+      },
+      trips: mergedTrips,
+    };
+  }
+
   function saveLocalBackup(message) {
     return writeStorage(data, message || "本機備份儲存失敗。");
   }
@@ -449,6 +502,51 @@
       },
       trips,
     };
+  }
+
+  async function refreshDataFromCloud({ showStatus = true } = {}) {
+    const localBackup = cloneData(data);
+    const remoteData = await loadTripsFromSupabase(localBackup);
+
+    if (remoteData) {
+      data = mergeLocalBackupIntoRemote(localBackup, remoteData);
+      saveLocalBackup("雲端資料已載入，但本機備份更新失敗。");
+      renderTripSelect();
+      render();
+      clearForm(showStatus ? "已從雲端更新目前狀態。" : undefined);
+      if (showStatus) {
+        setStatus("ok", "已從 Supabase 重新載入最新資料。");
+      }
+      return true;
+    }
+
+    if (showStatus) {
+      setStatus("warn", "雲端目前還沒有資料，已保留本機內容。");
+    }
+    return false;
+  }
+
+  async function syncAllDataToCloud() {
+    const originalActiveTripId = data.activeTripId;
+    const originalTrips = [...data.trips];
+
+    for (const tripSnapshot of originalTrips) {
+      const latestTrip = data.trips.find((trip) => trip.id === tripSnapshot.id) || tripSnapshot;
+      const syncedTrip = await updateTripInSupabase(latestTrip);
+      replaceTripRecord(latestTrip.id, syncedTrip);
+
+      const currentTrip = data.trips.find((trip) => trip.id === syncedTrip.id) || syncedTrip;
+      for (const itemSnapshot of currentTrip.items) {
+        const { syncedItem } = await upsertTripItemInSupabase(currentTrip, itemSnapshot);
+        replaceTripItemRecord(currentTrip.id, itemSnapshot.id, syncedItem);
+      }
+    }
+
+    if (data.trips.some((trip) => trip.id === originalActiveTripId)) {
+      data.activeTripId = originalActiveTripId;
+    }
+
+    saveLocalBackup("雲端同步完成，但本機備份更新失敗。");
   }
 
   async function createTripInSupabase(trip) {
@@ -1185,6 +1283,30 @@
     });
 
     els.btnExport.addEventListener("click", exportData);
+    els.btnSyncCloud.addEventListener("click", async () => {
+      const previousLabel = els.btnSyncCloud.textContent;
+      els.btnSyncCloud.disabled = true;
+      els.btnSyncCloud.textContent = "同步中...";
+
+      try {
+        await syncAllDataToCloud();
+        renderTripSelect();
+        render();
+        setStatus("ok", "已將目前資料同步到 Supabase。");
+      } catch (error) {
+        setStatus("warn", `同步到雲端失敗：${getErrorMessage(error, "寫入 Supabase 失敗。")}`);
+      } finally {
+        els.btnSyncCloud.disabled = false;
+        els.btnSyncCloud.textContent = previousLabel;
+      }
+    });
+    els.btnRefreshData.addEventListener("click", async () => {
+      try {
+        await refreshDataFromCloud({ showStatus: true });
+      } catch (error) {
+        setStatus("warn", `重新讀取雲端資料失敗：${getErrorMessage(error, "讀取 Supabase 失敗。")}`);
+      }
+    });
     els.importFile.addEventListener("change", importData);
     els.btnClear.addEventListener("click", clearActiveTripItems);
 
@@ -1220,11 +1342,9 @@
 
     data = loadData();
     try {
-      const remoteData = await loadTripsFromSupabase(data);
-      if (remoteData) {
+      const reloaded = await refreshDataFromCloud({ showStatus: false });
+      if (reloaded) {
         startupStatus = null;
-        data = remoteData;
-        saveLocalBackup("雲端資料已載入，但本機備份更新失敗。");
       } else if (data?.trips?.length) {
         rememberStartupStatus("warn", "目前雲端尚無旅程資料，已先載入本機備援。");
       } else {
